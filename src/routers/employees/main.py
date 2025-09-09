@@ -213,14 +213,10 @@ def get_info(request: Request, db: Session = Depends(get_db)):
 
 @router.post("/create", response_model=schemas.TokenResponse, status_code=status.HTTP_201_CREATED)
 def create(payload: schemas.CreateEmployeeSchema, db: Session = Depends(get_db)):
-    """
-    Create a new employee account and profile, then return an access token
-    bundled inside TokenResponse.data.
-    """
     try:
         logging.info(f"Employee creation attempt for email: {payload.email}")
 
-        # ---- Check existing (case-insensitive) ----
+        # check existing...
         existing = (
             db.query(models.Employee)
               .filter(func.lower(models.Employee.email) == func.lower(payload.email))
@@ -233,71 +229,83 @@ def create(payload: schemas.CreateEmployeeSchema, db: Session = Depends(get_db))
                 detail="An account with this email already exists. Please use a different email.",
             )
 
-        # ---- Split full name into first/last ----
+        # split name
         name_parts = payload.full_name.strip().split(maxsplit=1)
         first_name = name_parts[0]
         last_name = name_parts[1] if len(name_parts) > 1 else ""
 
-        # ---- Create employee (role=employee, status=active) ----
+        # create Employee
         new_employee = models.Employee(
             email=payload.email,
-            role=models.RoleEnum.employee,   # SA Enum
-            status=models.StatusEnum.active, # SA Enum
+            role=models.RoleEnum.employee,
+            status=models.StatusEnum.active,
         )
         new_employee.set_password(payload.password)
 
-        # ---- Create profile (1:1) ----
+        # create profile row
         profile = models.EmployeeProfile(
             employee=new_employee,
             first_name=first_name,
             last_name=last_name,
             phone_number=payload.phone_number,
             profile_path="profile_pictures/default.png",
-            profile_completed=False,  # keep int to match schema; set to False if you switch to Boolean
+            profile_completed=False,
         )
 
-        # ---- Persist in one transaction ----
+        # persist
         db.add(new_employee)
         db.add(profile)
         db.commit()
         db.refresh(new_employee)
         db.refresh(profile)
 
-        # ---- Create JWT including role ----
+        # create token
         access_token = create_access_token(data={"sub": new_employee.email, "role": new_employee.role.value})
 
-        # ---- Build EmployeeData for response ----
+        # --- Build nested profile object for response ---
+        # Use the exact shape of EmployeeProfileData
+        profile_payload = {
+            "first_name": profile.first_name,
+            "last_name": profile.last_name,
+            "phone_number": profile.phone_number,
+            "date_of_birth": profile.date_of_birth,
+            "gender": (profile.gender.value if hasattr(profile, "gender") and profile.gender else profile.gender),
+            "address": profile.address,
+            "state": profile.state,
+            "country": profile.country,
+            "pin_code": profile.pin_code,
+            "profile_path": profile.profile_path,
+            "emergency_contact": profile.emergency_contact,
+            # keep profile_completed boolean if your schema expects bool
+            "profile_completed": bool(profile.profile_completed),
+            "created_at": profile.created_at,
+            "updated_at": profile.updated_at,
+        }
+
+        # convert to Pydantic EmployeeProfileData (optional)
+        profile_data = schemas.EmployeeProfileData(**profile_payload)
+
+        # --- Build top-level EmployeeData with nested profile ---
         employee_data = schemas.EmployeeData(
             id=new_employee.id,
             email=new_employee.email,
-            role=new_employee.role.value,      # Pydantic RoleEnum will coerce
-            status=new_employee.status.value,  # Pydantic StatusEnum will coerce
-            first_name=profile.first_name,
-            last_name=profile.last_name,
-            phone_number=profile.phone_number,
-            date_of_birth=profile.date_of_birth,
-            gender=profile.gender.value if profile.gender else None,
-            address=profile.address,
-            state=profile.state,
-            country=profile.country,
-            pin_code=profile.pin_code,
-            profile_path=profile.profile_path,
-            emergency_contact=profile.emergency_contact,
-            profile_completed=profile.profile_completed,
+            role=new_employee.role.value,      # Pydantic will coerce
+            status=new_employee.status.value,  # Pydantic will coerce
             created_at=new_employee.created_at,
             updated_at=new_employee.updated_at,
+            profile=profile_data,              # <-- KEY: nested profile here
         )
 
         logging.info(f"Employee {new_employee.email} created successfully with role '{new_employee.role.value}'")
 
-        # ---- Wrap in TokenResponse (data can be any dict) ----
+        # Return TokenResponse: use model_dump() for pydantic v2 compatibility
         return schemas.TokenResponse(
             success=True,
             status=status.HTTP_201_CREATED,
             isActive=(new_employee.status.value == "active"),
             message="Employee created successfully. Welcome!",
             data={
-                "employee": employee_data.dict(),
+                "employee": employee_data.model_dump(),   # recommended for v2
                 "access_token": access_token,
                 "token_type": "bearer",
             },
@@ -312,6 +320,7 @@ def create(payload: schemas.CreateEmployeeSchema, db: Session = Depends(get_db))
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred. Please try again later.",
         )
+
 
 @router.get("/get-profile-path", response_model=schemas.EmployeeProfilePathResponse)
 def get_profile_path(
