@@ -20,6 +20,7 @@ class RoleEnum(enum.Enum):
 class StatusEnum(enum.Enum):
     active = "active"
     inactive = "inactive"
+    waiting = "waiting"
 
 class GenderEnum(enum.Enum):
     male = "male"
@@ -106,6 +107,9 @@ class EmployeeProfile(Base):
     state = Column(String(100), nullable=True)
     country = Column(String(100), nullable=True)
     pin_code = Column(String(20), nullable=True)
+    # ✅ New columns
+    state_name = Column(String(150), nullable=True)
+    pc_name = Column(String(150), nullable=True)
     profile_path = Column(Text, nullable=False, default="profile_pictures/default.png")
 
     # No doctor-only fields (specialization, license_number, years_exprience) — removed

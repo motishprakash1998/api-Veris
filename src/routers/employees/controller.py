@@ -10,7 +10,8 @@ from email.mime.text import MIMEText
 from datetime import datetime, timedelta
 from fastapi import HTTPException, status
 from email.mime.multipart import MIMEMultipart
-from botocore.exceptions import NoCredentialsError, ClientError
+from botocore.exceptions import NoCredentialsError, ClientError, BotoCoreError
+from botocore.client import Config
 
 
 # Load environment variables
@@ -23,8 +24,13 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60
 EMAIL = os.getenv('EMAIL')
 APP_PASSWORD = os.getenv('APP_PASSWORD')
 
+AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+AWS_REGION = os.getenv("REGION_NAME")  # change as needed
+S3_BUCKET_NAME = os.getenv("SOURCE_BUCKET_NAME")
+
 # Initialize S3 Client
-s3_client = boto3.client("s3", region_name="us-east-1")
+s3_client = boto3.client("s3", region_name=AWS_REGION)
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
@@ -106,7 +112,7 @@ def send_password_reset_email(email: str, token: str):
 def s3_file_exists(profile_path: str) -> bool:
     """
     Check if the given profile path exists in the specified S3 bucket.
-    
+
     Args:
         profile_path (str): Full S3 URI of the file, e.g., "s3://bucket_name/key_name".
 
@@ -125,53 +131,85 @@ def s3_file_exists(profile_path: str) -> bool:
         if not bucket_name or not key_name:
             raise ValueError(f"Invalid S3 path: {profile_path}")
 
-        # Initialize S3 client
-        s3_client = boto3.client("s3")
+        # Initialize S3 client with Signature v4
+        s3_client = boto3.client(
+            "s3",
+            region_name=AWS_REGION,
+            config=Config(signature_version="s3v4")
+        )
 
         # Check if the file exists
         s3_client.head_object(Bucket=bucket_name, Key=key_name)
         logging.info(f"File '{key_name}' exists in S3 bucket '{bucket_name}'.")
         return True
+
     except ClientError as e:
-        if e.response["Error"]["Code"] == "404":
+        error_code = e.response.get("Error", {}).get("Code", "")
+        if error_code == "404":
             logging.warning(f"File '{profile_path}' does not exist in S3 bucket '{bucket_name}'.")
             return False
-        else:
-            logging.error(f"Unexpected S3 error: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Unexpected S3 error: {e}",
-            )
+        logging.error(f"Unexpected S3 ClientError: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected S3 error: {e}",
+        )
+
     except NoCredentialsError:
         logging.error("AWS credentials not available.")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="S3 credentials issue. Please contact the administrator.",
         )
+
     except ValueError as ve:
         logging.error(str(ve))
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid S3 path: {profile_path}",
+            detail=str(ve),
         )
-        
-       
-def generate_presigned_url(source_bucket: str, s3_image_path: str) -> str:
+
+    except Exception as e:
+        logging.exception(f"Unexpected error checking S3 file: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unexpected error occurred while checking S3 file.",
+        )
+
+
+def generate_presigned_url(source_bucket: str, s3_image_path: str, expires_in: int = 7*24*60*60) -> str:
     """
     Generate a pre-signed URL for accessing an S3 object.
+
+    Args:
+        source_bucket (str): S3 bucket name
+        s3_image_path (str): Path/key of the object in S3
+        expires_in (int): Expiration in seconds (default 7 days)
+
+    Returns:
+        str: Pre-signed URL
+
+    Raises:
+        HTTPException: On failure to generate the URL
     """
-    expires_in = 7 * 24 * 60 * 60  # 7 days
-    s3_key = s3_image_path
     try:
-        url = boto3.client('s3').generate_presigned_url(
+        s3_client = boto3.client(
+            "s3",
+            region_name=AWS_REGION,
+            config=Config(signature_version="s3v4")
+        )
+
+        url = s3_client.generate_presigned_url(
             ClientMethod='get_object',
-            Params={'Bucket': source_bucket, 'Key': s3_key},
+            Params={'Bucket': source_bucket, 'Key': s3_image_path},
             ExpiresIn=expires_in
         )
+
+        logging.info(f"Generated presigned URL for '{s3_image_path}' in bucket '{source_bucket}'.")
         return url
-    except Exception as e:
+
+    except (NoCredentialsError, ClientError, BotoCoreError) as e:
         logging.error(f"Error generating pre-signed URL: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to generate pre-signed URL."
+            detail="Failed to generate pre-signed URL. Please check AWS credentials and bucket configuration."
         )
