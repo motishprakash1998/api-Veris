@@ -4,7 +4,7 @@ from src.config import APPNAME, VERSION
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from src.routers import (users_router, 
-                        feedback_router)
+                        feedback_router,election_services_router,admin_router,waiting_employees_router)
 
 # Defining the application
 app = FastAPI(
@@ -30,7 +30,9 @@ app.add_middleware(
 # Including all the routes for the 'users' module
 app.include_router(users_router)
 app.include_router(feedback_router)
-
+app.include_router(election_services_router)
+app.include_router(admin_router)
+app.include_router(waiting_employees_router)
 
 @app.get("/")
 def main_function():

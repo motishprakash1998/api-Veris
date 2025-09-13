@@ -13,6 +13,7 @@ class RoleEnum(str, enum.Enum):
 class StatusEnum(str, enum.Enum):
     active = "active"
     inactive = "inactive"
+    waiting = "waiting"
 
 
 # Base Schema for Employees table
@@ -141,6 +142,8 @@ class EmployeeProfileData(BaseModel):
     country: Optional[str]
     pin_code: Optional[str]
     profile_path: Optional[str]
+    state_name: Optional[str]
+    pc_name: Optional[str]
     emergency_contact: Optional[str]
     profile_completed: Optional[bool]
     created_at: datetime
@@ -188,6 +191,8 @@ class EmployeeUpdateRequest(BaseModel):
     state: Optional[str] = None
     country: Optional[str] = None
     pin_code: Optional[str] = None
+    state_name: Optional[str] = None
+    pc_name: Optional[str] = None
     gender: Optional[str] = None
     date_of_birth: Optional[str] = None
     emergency_contact: Optional[str] = None

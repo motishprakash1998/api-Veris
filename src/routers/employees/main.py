@@ -18,6 +18,8 @@ from src.routers.employees.schemas import LoginSchema, TokenResponse
 from fastapi import APIRouter, Depends, HTTPException,status,Request
 from src.utils.jwt import create_access_token, get_email_from_token,create_refresh_token,verify_password
 from fastapi.responses import JSONResponse
+from fastapi import BackgroundTasks
+
 load_dotenv ()
 
 # Defining the router
@@ -34,7 +36,6 @@ def login(employee_credentials: LoginSchema = Body(...), db: Session = Depends(g
     logging.debug("Login function called")
 
     try:
-        # Either use f-strings or pass args to logging
         logging.info("Login attempt for email: %s", employee_credentials.email)
 
         employee = (
@@ -43,6 +44,7 @@ def login(employee_credentials: LoginSchema = Body(...), db: Session = Depends(g
                 models.Employee.email,
                 models.Employee.password_hash,
                 models.Employee.role,
+                models.Employee.status,  # Enum field
             )
             .filter(models.Employee.email == employee_credentials.email)
             .first()
@@ -61,9 +63,39 @@ def login(employee_credentials: LoginSchema = Body(...), db: Session = Depends(g
                 },
             )
 
-        logging.debug("Employee found: %s", employee.email)
+        logging.debug(f"Employee found: {employee.email} || Status: {employee.status}")
 
-        #  Do not log raw passwords in verify_password()
+        # 🔹 Extract enum value safely
+        status_val = getattr(employee.status, "value", str(employee.status))
+
+        # 🔹 Check account status before verifying password
+        if status_val == "waiting":
+            logging.info("Login blocked: account under review for %s", employee.email)
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "success": False,
+                    "status": 403,
+                    "isActive": False,
+                    "message": "Your request is under review, please wait for approval.",
+                    "data": None,
+                },
+            )
+
+        if status_val != "active":
+            logging.warning("Login blocked: inactive account for %s", employee.email)
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "success": False,
+                    "status": 403,
+                    "isActive": False,
+                    "message": "Your account is not active. Please contact support.",
+                    "data": None,
+                },
+            )
+
+        # ✅ Now verify password
         if not verify_password(employee_credentials.password, employee.password_hash):
             logging.warning("Login failed: bad password for %s", employee_credentials.email)
             return JSONResponse(
@@ -77,7 +109,7 @@ def login(employee_credentials: LoginSchema = Body(...), db: Session = Depends(g
                 },
             )
 
-        # Make role JSON-serializable without importing enum
+        # Make role JSON-serializable
         role_obj = employee.role
         role_str = getattr(role_obj, "value", None) or getattr(role_obj, "name", None) or str(role_obj)
 
@@ -113,7 +145,8 @@ def login(employee_credentials: LoginSchema = Body(...), db: Session = Depends(g
         )
 
 @router.get("/info", response_model=schemas.EmployeeResponse)
-def get_info(request: Request, db: Session = Depends(get_db)):
+def get_info(request: Request, db: Session = Depends(get_db),
+             token : str = Depends(oauth2_scheme)):
     """
     Endpoint to fetch employee information using the JWT token.
     """
@@ -187,6 +220,8 @@ def get_info(request: Request, db: Session = Depends(get_db)):
             state=profile.state if profile else None,
             country=profile.country if profile else None,
             pin_code=profile.pin_code if profile else None,
+            state_name=profile.state_name if profile else None,
+            pc_name=profile.pc_name if profile else None,
             emergency_contact=profile.emergency_contact if profile else None,
             profile_completed=1 if profile and profile.profile_completed else 0,
             created_at=employee.created_at,
@@ -212,10 +247,10 @@ def get_info(request: Request, db: Session = Depends(get_db)):
         )
 
 @router.post("/create", response_model=schemas.TokenResponse, status_code=status.HTTP_201_CREATED)
-def create(payload: schemas.CreateEmployeeSchema, db: Session = Depends(get_db)):
+def create(background_tasks: BackgroundTasks, payload: schemas.CreateEmployeeSchema, db: Session = Depends(get_db)):
     try:
         logging.info(f"Employee creation attempt for email: {payload.email}")
-
+        logging.debug(f"Background tasks available: {background_tasks is not None}")
         # check existing...
         existing = (
             db.query(models.Employee)
@@ -234,11 +269,11 @@ def create(payload: schemas.CreateEmployeeSchema, db: Session = Depends(get_db))
         first_name = name_parts[0]
         last_name = name_parts[1] if len(name_parts) > 1 else ""
 
-        # create Employee
+        # create Employee (default = waiting)
         new_employee = models.Employee(
             email=payload.email,
             role=models.RoleEnum.employee,
-            status=models.StatusEnum.active,
+            status=models.StatusEnum.waiting,   # pending approval
         )
         new_employee.set_password(payload.password)
 
@@ -259,11 +294,14 @@ def create(payload: schemas.CreateEmployeeSchema, db: Session = Depends(get_db))
         db.refresh(new_employee)
         db.refresh(profile)
 
-        # create token
-        access_token = create_access_token(data={"sub": new_employee.email, "role": new_employee.role.value})
+        # send mail after successful creation
+        from src.utils.email_service import send_account_creation_email
+        logging.info(f"Scheduling account creation email to {new_employee.email} and background_tasks: {background_tasks is not None}")
+        background_tasks.add_task(
+            send_account_creation_email, new_employee.email, f"{first_name} {last_name}"
+        )
 
-        # --- Build nested profile object for response ---
-        # Use the exact shape of EmployeeProfileData
+        # --- Build profile object ---
         profile_payload = {
             "first_name": profile.first_name,
             "last_name": profile.last_name,
@@ -276,40 +314,54 @@ def create(payload: schemas.CreateEmployeeSchema, db: Session = Depends(get_db))
             "pin_code": profile.pin_code,
             "profile_path": profile.profile_path,
             "emergency_contact": profile.emergency_contact,
-            # keep profile_completed boolean if your schema expects bool
             "profile_completed": bool(profile.profile_completed),
             "created_at": profile.created_at,
             "updated_at": profile.updated_at,
         }
-
-        # convert to Pydantic EmployeeProfileData (optional)
         profile_data = schemas.EmployeeProfileData(**profile_payload)
 
-        # --- Build top-level EmployeeData with nested profile ---
         employee_data = schemas.EmployeeData(
             id=new_employee.id,
             email=new_employee.email,
-            role=new_employee.role.value,      # Pydantic will coerce
-            status=new_employee.status.value,  # Pydantic will coerce
+            role=new_employee.role.value,
+            status=new_employee.status.value,
             created_at=new_employee.created_at,
             updated_at=new_employee.updated_at,
-            profile=profile_data,              # <-- KEY: nested profile here
+            profile=profile_data,
         )
 
         logging.info(f"Employee {new_employee.email} created successfully with role '{new_employee.role.value}'")
 
-        # Return TokenResponse: use model_dump() for pydantic v2 compatibility
-        return schemas.TokenResponse(
-            success=True,
-            status=status.HTTP_201_CREATED,
-            isActive=(new_employee.status.value == "active"),
-            message="Employee created successfully. Welcome!",
-            data={
-                "employee": employee_data.model_dump(),   # recommended for v2
-                "access_token": access_token,
-                "token_type": "bearer",
-            },
-        )
+        # --- Response ---
+        if new_employee.status == models.StatusEnum.active:
+            # Only create token if ACTIVE
+            access_token = create_access_token(
+                data={"sub": new_employee.email, "role": new_employee.role.value}
+            )
+            return schemas.TokenResponse(
+                success=True,
+                status=status.HTTP_201_CREATED,
+                isActive=True,
+                isWaiting=False,
+                message="Employee account created and activated successfully.",
+                data={
+                    "employee": employee_data.model_dump(),
+                    "access_token": access_token,
+                    "token_type": "bearer",
+                },
+            )
+        else:
+            # If WAITING → no token
+            return schemas.TokenResponse(
+                success=True,
+                status=status.HTTP_201_CREATED,
+                isActive=False,
+                isWaiting=True,
+                message="Employee account created successfully and is pending admin approval.",
+                data={
+                    "employee": employee_data.model_dump()
+                },
+            )
 
     except HTTPException:
         raise
@@ -320,7 +372,6 @@ def create(payload: schemas.CreateEmployeeSchema, db: Session = Depends(get_db))
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred. Please try again later.",
         )
-
 
 @router.get("/get-profile-path", response_model=schemas.EmployeeProfilePathResponse)
 def get_profile_path(
@@ -548,6 +599,7 @@ async def update_profile_path(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred. Please try again later.",
         )
+
 @router.put("/update-employee-info", response_model=schemas.EmployeeResponse)
 def update_info(
     updated_info: schemas.EmployeeUpdateRequest = Body(...),
