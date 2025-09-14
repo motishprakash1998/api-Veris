@@ -1,6 +1,6 @@
 # app/models.py
 
-from sqlalchemy import Column, Integer, String, Float, BigInteger, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, BigInteger, ForeignKey,Boolean, DateTime
 from sqlalchemy.orm import relationship, declarative_base
 
 Base = declarative_base()
@@ -103,6 +103,10 @@ class Result(Base):
     # Relationships
     election = relationship("Election", back_populates="results")
     candidate = relationship("Candidate", back_populates="results")
+    
+     # Soft-delete fields
+    is_deleted = Column(Boolean, nullable=False, default=False)
+    deleted_at = Column(DateTime, nullable=True)
 
 
 # -------------------------

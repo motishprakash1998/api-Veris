@@ -16,6 +16,12 @@ app = FastAPI(
 origins = [
     "http://localhost:8081",  # Frontend during development
     "http://127.0.0.1:8081",  # Alternate localhost
+    "http://localhost:5173",  # Frontend on port 5173
+    "http://127.0.0.1:5173",  # Alternate localhost on port 5173
+    "http://localhost:3000",  # Frontend on port 3000
+    "http://127.0.0.1:3000",  # Alternate localhost on port 3000
+    "https://*",              # Allow HTTPS for any origin
+    "*"                       # Allow all other origins
 ]
 
 # Add CORS middleware

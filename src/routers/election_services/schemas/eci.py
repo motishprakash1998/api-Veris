@@ -1,10 +1,6 @@
 # schemas/election_services.py
 from pydantic import BaseModel
-from typing import List
-
-# src/schemas/election_services.py
-from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 
 class ElectionServiceItem(BaseModel):
     state_name: str | None
@@ -30,3 +26,34 @@ class ElectionServiceItem(BaseModel):
 class ElectionServicesResponse(BaseModel):
     total: int
     items: List[ElectionServiceItem]
+    
+class ElectionFilters(BaseModel):
+    pc_name: Optional[str] = None
+    state_name: Optional[str] = None
+    categories: Optional[List[str]] = None
+    party_name: Optional[str] = None
+    party_symbol: Optional[str] = None
+    sex: Optional[str] = None
+    min_age: Optional[float] = None
+    max_age: Optional[float] = None
+    limit: int = 10
+
+class ElectionUpdateSchema(BaseModel):
+    state_name: Optional[str] = None
+    pc_name: Optional[str] = None
+    candidate_name: Optional[str] = None
+    sex: Optional[str] = None
+    age: Optional[float] = None
+    category: Optional[str] = None
+    party_name: Optional[str] = None
+    party_symbol: Optional[str] = None
+    general_votes: Optional[int] = None
+    postal_votes: Optional[int] = None
+    total_votes: Optional[int] = None
+    over_total_electors_in_constituency: Optional[float] = None
+    over_total_votes_polled_in_constituency: Optional[float] = None
+    total_electors: Optional[int] = None
+    year: Optional[int] = None
+
+    class Config:
+        orm_mode = True
