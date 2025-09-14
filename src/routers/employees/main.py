@@ -125,6 +125,7 @@ def login(employee_credentials: LoginSchema = Body(...), db: Session = Depends(g
             "message": "Login successful. Welcome back!",
             "data": {
                 "email_id": employee.email,
+                "role":role_str,
                 "access_token": access_token,
                 "refresh_token": refresh_token,
                 "token_type": "bearer",
