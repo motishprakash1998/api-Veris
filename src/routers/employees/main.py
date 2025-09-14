@@ -250,8 +250,8 @@ def get_info(request: Request, db: Session = Depends(get_db),
 def create(background_tasks: BackgroundTasks, payload: schemas.CreateEmployeeSchema, db: Session = Depends(get_db)):
     try:
         logging.info(f"Employee creation attempt for email: {payload.email}")
-        logging.debug(f"Background tasks available: {background_tasks is not None}")
-        # check existing...
+
+        # --- Check if employee already exists ---
         existing = (
             db.query(models.Employee)
               .filter(func.lower(models.Employee.email) == func.lower(payload.email))
@@ -264,12 +264,12 @@ def create(background_tasks: BackgroundTasks, payload: schemas.CreateEmployeeSch
                 detail="An account with this email already exists. Please use a different email.",
             )
 
-        # split name
+        # --- Split full name ---
         name_parts = payload.full_name.strip().split(maxsplit=1)
         first_name = name_parts[0]
         last_name = name_parts[1] if len(name_parts) > 1 else ""
 
-        # create Employee (default = waiting)
+        # --- Create Employee object ---
         new_employee = models.Employee(
             email=payload.email,
             role=models.RoleEnum.employee,
@@ -277,7 +277,7 @@ def create(background_tasks: BackgroundTasks, payload: schemas.CreateEmployeeSch
         )
         new_employee.set_password(payload.password)
 
-        # create profile row
+        # --- Create Profile object ---
         profile = models.EmployeeProfile(
             employee=new_employee,
             first_name=first_name,
@@ -287,21 +287,30 @@ def create(background_tasks: BackgroundTasks, payload: schemas.CreateEmployeeSch
             profile_completed=False,
         )
 
-        # persist
+        # --- Add to session ---
         db.add(new_employee)
         db.add(profile)
-        db.commit()
-        db.refresh(new_employee)
-        db.refresh(profile)
 
-        # send mail after successful creation
+        # --- Commit & refresh to populate timestamps & IDs ---
+        try:
+            db.commit()
+            db.refresh(new_employee)
+            db.refresh(profile)
+        except Exception:
+            db.rollback()
+            logging.exception("Database commit failed during employee creation")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="An error occurred while creating the employee. Please try again.",
+            )
+
+        # --- Send mail in background (after commit so no rollback issues) ---
         from src.utils.email_service import send_account_creation_email
-        logging.info(f"Scheduling account creation email to {new_employee.email} and background_tasks: {background_tasks is not None}")
         background_tasks.add_task(
             send_account_creation_email, new_employee.email, f"{first_name} {last_name}"
         )
 
-        # --- Build profile object ---
+        # --- Build profile schema AFTER refresh ---
         profile_payload = {
             "first_name": profile.first_name,
             "last_name": profile.last_name,
@@ -317,6 +326,8 @@ def create(background_tasks: BackgroundTasks, payload: schemas.CreateEmployeeSch
             "profile_completed": bool(profile.profile_completed),
             "created_at": profile.created_at,
             "updated_at": profile.updated_at,
+            "state_name": getattr(profile, "state_name", None),
+            "pc_name": getattr(profile, "pc_name", None),
         }
         profile_data = schemas.EmployeeProfileData(**profile_payload)
 
@@ -334,7 +345,6 @@ def create(background_tasks: BackgroundTasks, payload: schemas.CreateEmployeeSch
 
         # --- Response ---
         if new_employee.status == models.StatusEnum.active:
-            # Only create token if ACTIVE
             access_token = create_access_token(
                 data={"sub": new_employee.email, "role": new_employee.role.value}
             )
@@ -351,19 +361,17 @@ def create(background_tasks: BackgroundTasks, payload: schemas.CreateEmployeeSch
                 },
             )
         else:
-            # If WAITING → no token
             return schemas.TokenResponse(
                 success=True,
                 status=status.HTTP_201_CREATED,
                 isActive=False,
                 isWaiting=True,
                 message="Employee account created successfully and is pending admin approval.",
-                data={
-                    "employee": employee_data.model_dump()
-                },
+                data={"employee": employee_data.model_dump()},
             )
 
     except HTTPException:
+        db.rollback()  # rollback if commit not done yet
         raise
     except Exception as e:
         logging.exception(f"Unexpected error during employee creation: {e}")

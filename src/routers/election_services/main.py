@@ -15,8 +15,10 @@ from fastapi.security import OAuth2PasswordBearer
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 from fastapi import APIRouter, Depends, HTTPException,status,Request
 from fastapi.responses import JSONResponse
-from typing import List, Optional, Any
-
+from typing import List, Optional, Any, Dict
+from src.utils.jwt import get_email_from_token
+from src.routers.employees import models as employee_models
+from src.routers.employees import schemas as employee_schemas
 load_dotenv ()
 
 # Defining the router
@@ -33,74 +35,252 @@ router = APIRouter(
 # If you want strict typing, re-add response_model=schemas.ElectionServicesResponse
 # and convert controller output to match that schema before returning.
 
-@router.get("/fetch_data")
-def fetch_election_data(
-    pc_name: Optional[str] = Query(None, description="Filter by parliamentary constituency name (pc_name)"),
-    state_name: Optional[str] = Query(None, description="Filter by state name"),
-    categories: Optional[List[str]] = Query(None, description="Filter by one or more candidate categories (repeatable)"),
-    party_name: Optional[str] = Query(None, description="Filter by party name"),
-    party_symbol: Optional[str] = Query(None, description="Filter by party symbol"),
-    sex: Optional[str] = Query(None, description="Filter by candidate sex (male/female)"),
-    min_age: Optional[float] = Query(None, description="Minimum candidate age"),
-    max_age: Optional[float] = Query(None, description="Maximum candidate age"),
-    limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return (default 10)"),
+class _DictPayloadWrapper:
+    """Tiny wrapper so controller can call payload.dict(exclude_unset=True)."""
+    def __init__(self, data: Dict):
+        self._data = data
+
+    def dict(self, exclude_unset: bool = True) -> Dict:
+        # ignore exclude_unset because we already prepared data accordingly
+        return self._data
+
+def to_title(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value.title()  # converts to Title Caps
+    return value
+
+
+@router.post("/create_by_candidate")
+def create_candidate_endpoint(
+    payload: schemas.ElectionUpdateSchema,   # use/create a dedicated Create schema if you want
     db: Session = Depends(get_db),
+    token: str = Depends(oauth2_scheme),
 ) -> Any:
     """
-    Flexible fetch endpoint for Election Services.
-
-    Behaviour:
-    - If pc_name provided: prioritises pc_name filtering and orders by pc_name.
-    - Otherwise orders alphabetically by state_name then pc_name.
-    - All filters are optional.
-    - Returns either:
-      * legacy tuple-mapped response: {"total": int, "items": [...]}
-      * or the new structured response: {"details": { status, status_code, message, data: {...} }}
+    Create a new election result entry (with related state/pc/party/candidate/election as needed).
+    - Admin/Superadmin: unrestricted
+    - Employee: allowed only if payload.state_name & pc_name match their profile
     """
     try:
-        # call controller with all supported filters
-        result = controller.get_election_services(
-            db=db,
-            pc_name=pc_name,
-            state_name=state_name,
-            categories=categories,
-            party_name=party_name,
-            party_symbol=party_symbol,
-            sex=sex,
-            min_age=min_age,
-            max_age=max_age,
-            limit=limit,
+        # normalize incoming validated payload to lowercase (we will still rely on controller but double-check)
+        data = payload.dict(exclude_unset=True)
+        normalized = {}
+        for k, v in data.items():
+            if isinstance(v, str):
+                normalized[k] = v.strip().lower()
+            else:
+                normalized[k] = v
+        # wrap so controller can call .dict()
+        class _P:
+            def __init__(self, d): self._d = d
+            def dict(self, exclude_unset=True): return self._d
+
+        wrapped = _P(normalized)
+
+        # auth
+        try:
+            email = get_email_from_token(token)
+        except Exception as e:
+            logger.error("Token decoding failed: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        user = db.query(employee_models.Employee).filter(
+            employee_models.Employee.email == email
+        ).first()
+
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+        role = user.role.value if hasattr(user.role, "value") else str(user.role)
+
+        # employee-scoped check
+        if role.lower() == "employee":
+            profile = (
+                db.query(employee_models.EmployeeProfile)
+                .filter(employee_models.EmployeeProfile.employee_id == user.id)
+                .first()
+            )
+            if not profile:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You are not assigned any state/constituency.",
+                )
+
+            # require payload to include state_name & pc_name
+            payload_state = normalized.get("state_name")
+            payload_pc = normalized.get("pc_name")
+            if not payload_state or not payload_pc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Employee must provide state_name and pc_name that match their profile."
+                )
+
+            if payload_state != (profile.state_name or "").strip().lower() or payload_pc != (profile.pc_name or "").strip().lower():
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You can only create records for your assigned state/constituency.",
+                )
+
+        elif role.lower() not in ["superadmin", "admin"]:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized role.")
+
+        # create
+        created = controller.create_candidate_entry(db=db, payload=wrapped)
+
+        return {
+            "success": True,
+            "status": status.HTTP_201_CREATED,
+            "message": "Created candidate election entry successfully",
+            "data": created,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Unhandled exception while creating candidate entry")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "status": "error",
+                "status_code": 500,
+                "message": "An unexpected error occurred while creating.",
+                "data": {"error": str(exc)},
+            },
         )
 
-        # If controller returns a tuple (total, items) -> convert into your schema
-        if isinstance(result, tuple) and len(result) == 2:
-            total, items = result
-            logger.info(f"Fetched {len(items)} records from the database (legacy tuple).")
-            logger.debug(f"Results: {items}")
-            # If you have a Pydantic response schema and want to return it:
-            try:
-                return schemas.ElectionServicesResponse(total=total, items=items)
-            except Exception as conv_exc:
-                # fallback to returning plain JSON if conversion fails
-                logger.warning("Could not serialize to ElectionServicesResponse, returning plain dict", exc_info=conv_exc)
-                return {"total": total, "items": items}
+@router.get("/fetch_data")
+def fetch_election_data(
+    filters: schemas.ElectionFilters = Depends(),  # ✅ schema for query params
+    db: Session = Depends(get_db),
+    token: str = Depends(oauth2_scheme),
+) -> Any:
+    """
+    Fetch election data with role-based restrictions:
+    - superadmin/admin → unrestricted (all data if no filters)
+    - employee → only data from assigned state_name/pc_name
+    """
 
-        # If controller returned the new professional dict with "details", return as-is
+    try:
+        # 🔹 Decode email from token
+        try:
+            email = get_email_from_token(token)
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Token decoding failed: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # 🔹 Fetch user
+        user = (
+            db.query(employee_models.Employee)
+            .filter(employee_models.Employee.email == email)
+            .first()
+        )
+        if not user:
+            logger.warning("User not found for email: %s", email)
+            return {
+                "success": False,
+                "status": status.HTTP_404_NOT_FOUND,
+                "message": "User not found",
+                "data": None,
+            }
+
+        role = user.role.value if hasattr(user.role, "value") else str(user.role)
+        logger.info("User %s with role %s is accessing election data", email, role)
+
+        # -----------------------------
+        # 🔹 Role-based restrictions
+        # -----------------------------
+        if role.lower() in ["superadmin", "admin"]:
+            # Unrestricted – use filters directly
+            allowed_state = filters.state_name
+            allowed_pc = filters.pc_name
+
+        elif role.lower() == "employee":
+            # Restrict to assigned profile
+            profile = (
+                db.query(employee_models.EmployeeProfile)
+                .filter(employee_models.EmployeeProfile.employee_id == user.id)
+                .first()
+            )
+
+            if not profile or (not profile.state_name and not profile.pc_name):
+                return {
+                    "success": False,
+                    "status": status.HTTP_403_FORBIDDEN,
+                    "message": "You are not assigned any state or constituency. Please contact support.",
+                    "data": None,
+                }
+
+            # if employee provided filters, ignore them → force assigned ones
+            allowed_state = profile.state_name
+            allowed_pc = profile.pc_name
+
+        else:
+            return {
+                "success": False,
+                "status": status.HTTP_403_FORBIDDEN,
+                "message": "Unauthorized role. Please contact support.",
+                "data": None,
+            }
+
+        # -----------------------------
+        # 🔹 Call controller
+        # -----------------------------
+        result = controller.get_election_services(
+            db=db,
+            pc_name=allowed_pc,
+            state_name=allowed_state,
+            categories=filters.categories,
+            party_name=filters.party_name,
+            party_symbol=filters.party_symbol,
+            sex=filters.sex,
+            min_age=filters.min_age,
+            max_age=filters.max_age,
+            limit=filters.limit,
+        )
+
+        # -----------------------------
+        # 🔹 Format response
+        # -----------------------------
         if isinstance(result, dict) and "details" in result:
-            logger.info("Fetched records from the database (structured response).")
-            logger.debug(f"Structured result: {result}")
+            data = result["details"]["data"]
+            if "items" in data:
+                formatted_items = []
+                for item in data["items"]:
+                    formatted_items.append({
+                        **item,
+                        "state_name": to_title(item.get("state_name")),
+                        "pc_name": to_title(item.get("pc_name")),
+                        "candidate_name": to_title(item.get("candidate_name")),
+                        "party_name": to_title(item.get("party_name")),
+                        "party_symbol": to_title(item.get("party_symbol")),
+                        "category": to_title(item.get("category")),
+                        "sex": to_title(item.get("sex")),
+                    })
+                data["items"] = formatted_items
             return result
 
-        # Unknown return shape — return it directly but log a warning
-        logger.warning("Controller returned an unexpected shape; returning raw result.")
-        logger.debug(f"Raw controller result: {result}")
+
+        if isinstance(result, dict) and "details" in result:
+            return result
+
+        logger.warning("Controller returned unexpected shape")
         return result
 
     except HTTPException:
-        # re-raise FastAPI HTTPException unchanged
         raise
     except Exception as exc:
-        # professional error handling and message
         logger.exception("Unhandled exception while fetching election services")
         raise HTTPException(
             status_code=500,
@@ -108,6 +288,199 @@ def fetch_election_data(
                 "status": "error",
                 "status_code": 500,
                 "message": "An unexpected error occurred while processing your request.",
+                "data": {"error": str(exc)},
+            },
+        )
+        
+# Create a route to get election information by ID (no role checks)
+@router.get("/get_candidate_info/{candidate_id}")
+def get_candidate_data_by_id(
+    candidate_id: int,
+    db: Session = Depends(get_db),
+    token: str = Depends(oauth2_scheme),
+) -> Any:
+    """
+    Get election data by Candidate ID.
+    """
+
+    try:
+        # 🔹 Decode user from token
+        try:
+            email = get_email_from_token(token)
+        except Exception as e:
+            logger.error(f"Token decoding failed: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        # 🔹 Fetch user
+        user = db.query(employee_models.Employee).filter(
+            employee_models.Employee.email == email
+        ).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found",
+            )
+        role = user.role.value if hasattr(user.role, "value") else str(user.role)
+        logger.info("User %s with role %s is accessing candidate data by ID", email, role)
+        # -----------------------------
+        
+        # 🔹 Fetch candidate record (returns list of dicts now)
+        candidate_record = controller.get_candidate_details_by_id(db, candidate_id)
+        if not candidate_record:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Candidate record not found",
+            )
+
+        # 🔹 Return record directly
+        return {
+            "success": True,
+            "status": status.HTTP_200_OK,
+            "message": "Candidate record fetched successfully",
+            "data": candidate_record,   # already JSON serializable
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Unhandled exception while fetching candidate record by ID")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "status": "error",
+                "status_code": 500,
+                "message": "An unexpected error occurred while fetching the record.",
+                "data": {"error": str(exc)},
+            },
+        )
+        
+  
+@router.put("/update_by_candidate/{candidate_id}")
+def update_candidate_data(
+    candidate_id: int,
+    payload: schemas.ElectionUpdateSchema,
+    db: Session = Depends(get_db),
+) -> Any:
+    try:
+        # --- 1) get provided fields as dict (only set fields)
+        data = payload.dict(exclude_unset=True)
+
+        # --- 2) lowercase all string values (you can customize allowed fields if needed)
+        normalized = {}
+        for k, v in data.items():
+            if isinstance(v, str):
+                normalized[k] = v.strip().lower()
+            else:
+                normalized[k] = v
+
+        # --- 3) pass wrapped payload to controller (controller expects .dict())
+        wrapped_payload = _DictPayloadWrapper(normalized)
+
+        updated = controller.update_election_service_by_candidate(
+            db=db,
+            candidate_id=candidate_id,
+            payload=wrapped_payload,
+            election_id=None,      # or set if you want to target a specific election
+            update_all=False,      # set True if you want to update all results
+        )
+
+        return {
+            "success": True,
+            "status": status.HTTP_200_OK,
+            "message": "Candidate election record updated successfully",
+            "data": updated,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Unhandled exception while updating candidate record")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "status": "error",
+                "status_code": 500,
+                "message": "An unexpected error occurred while updating.",
+                "data": {"error": str(exc)},
+            },
+        )
+        
+
+@router.delete("/delete_by_candidate/{candidate_id}")
+def soft_delete_candidate_record(
+    candidate_id: int,
+    result_id: Optional[int] = None,
+    delete_all: Optional[bool] = False,
+    db: Session = Depends(get_db),
+    token: str = Depends(oauth2_scheme),
+) -> Any:
+    """
+    Soft-delete candidate result(s).
+    - candidate_id: path param
+    - result_id: optional query param to delete (mark) a specific result
+    - delete_all: optional query flag; if true marks all results for the candidate
+    Authorization: only superadmin/admin allowed.
+    """
+
+    try:
+        # decode token
+        try:
+            email = get_email_from_token(token)
+        except Exception as e:
+            logger.error("Token decoding failed: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # fetch user
+        user = db.query(employee_models.Employee).filter(
+            employee_models.Employee.email == email
+        ).first()
+
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found",
+            )
+
+        role = user.role.value if hasattr(user.role, "value") else str(user.role)
+
+        # Only allow admins/superadmins to soft-delete
+        if role.lower() not in ["superadmin", "admin"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You are not authorized to delete (soft-delete) records.",
+            )
+
+        # perform soft-delete
+        marked = controller.delete_candidate_results(
+            db=db,
+            candidate_id=candidate_id,
+            result_id=result_id,
+            delete_all=bool(delete_all),
+        )
+
+        return {
+            "success": True,
+            "status": status.HTTP_200_OK,
+            "message": "Marked candidate result(s) as deleted successfully",
+            "data": marked,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Unhandled exception while soft-deleting candidate record")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "status": "error",
+                "status_code": 500,
+                "message": "An unexpected error occurred while deleting.",
                 "data": {"error": str(exc)},
             },
         )

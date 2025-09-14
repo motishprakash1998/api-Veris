@@ -1,3 +1,4 @@
-from .eci import ElectionServiceItem, ElectionServicesResponse
+from .eci import ElectionServiceItem, ElectionServicesResponse, ElectionFilters,ElectionUpdateSchema
 
-__all__ = ['ElectionServiceItem', 'ElectionServicesResponse']
+__all__ = ['ElectionServiceItem', 'ElectionServicesResponse'
+           , 'ElectionFilters','ElectionUpdateSchema']
