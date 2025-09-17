@@ -1,6 +1,7 @@
 # schemas/election_services.py
-from pydantic import BaseModel
+from pydantic import BaseModel,Field
 from typing import List, Optional
+
 
 class ElectionServiceItem(BaseModel):
     state_name: str | None
@@ -37,6 +38,8 @@ class ElectionFilters(BaseModel):
     min_age: Optional[float] = None
     max_age: Optional[float] = None
     limit: int = 10
+    page: Optional[int] = Field(1, ge=1)  # default page=1
+    limit: Optional[int] = Field(10, ge=1, le=100)  # default 10 per page
 
 class ElectionUpdateSchema(BaseModel):
     state_name: Optional[str] = None
