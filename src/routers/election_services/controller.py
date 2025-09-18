@@ -2,13 +2,14 @@
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, func
-from .models import eci as models
+from . import models
 from fastapi import HTTPException, status
 from .schemas import eci as schemas 
 from sqlalchemy.orm import joinedload
 from sqlalchemy import desc
 from datetime import datetime
 from loguru import logger
+from rapidfuzz import fuzz ,process
 
 
 def get_election_services(
@@ -23,11 +24,10 @@ def get_election_services(
     max_age: Optional[float] = None,
     year: Optional[int] = None,
     limit: int = 10,
+    offset: int = 0,   # ✅ NEW
 ):
     """
-    Fetch election services with flexible filtering.
-    All text filters are applied case-insensitively.
-    Supports filtering by `year` (Election.year).
+    Fetch election services with flexible filtering and pagination.
     """
     try:
         # base query
@@ -56,42 +56,29 @@ def get_election_services(
             .join(models.Candidate, models.Candidate.candidate_id == models.Result.candidate_id)
             .join(models.Party, models.Party.party_id == models.Candidate.party_id)
         )
-        # always exclude soft-deleted result rows
+
         query = query.filter(models.Result.is_deleted == False)
 
         filters = []
 
-        # 1) pc_name filter
+        # 🔹 Apply filters (same as before)...
         if pc_name:
             filters.append(func.lower(models.Constituency.pc_name).like(f"%{pc_name.lower()}%"))
-
-        # 2) state_name filter
         if state_name:
             filters.append(func.lower(models.State.state_name).like(f"%{state_name.lower()}%"))
-
-        # 3) year filter (exact match)
         if year is not None:
             filters.append(models.Election.year == year)
-
-        # 4) categories
         if categories:
             if isinstance(categories, list):
-                categories = [c.lower() for c in categories]
-                filters.append(func.lower(models.Candidate.category).in_(categories))
+                filters.append(func.lower(models.Candidate.category).in_([c.lower() for c in categories]))
             else:
                 filters.append(func.lower(models.Candidate.category).like(f"%{categories.lower()}%"))
-
-        # 5) party filters
         if party_name:
             filters.append(func.lower(models.Party.party_name).like(f"%{party_name.lower()}%"))
         if party_symbol:
             filters.append(func.lower(models.Party.party_symbol).like(f"%{party_symbol.lower()}%"))
-
-        # 6) sex
         if sex:
             filters.append(func.lower(models.Candidate.gender).like(f"%{sex.lower()}%"))
-
-        # 7) age filters
         if (min_age is not None) and (max_age is not None):
             filters.append(and_(models.Candidate.age >= min_age, models.Candidate.age <= max_age))
         elif min_age is not None:
@@ -99,7 +86,6 @@ def get_election_services(
         elif max_age is not None:
             filters.append(models.Candidate.age <= max_age)
 
-        # apply filters
         if filters:
             query = query.filter(*filters)
 
@@ -111,22 +97,21 @@ def get_election_services(
                 models.Election.year.desc()
             )
         else:
-            # default alphabetical by state then pc, newest year first within same pc/state
             query = query.order_by(
                 func.lower(models.State.state_name).asc(),
                 func.lower(models.Constituency.pc_name).asc(),
                 models.Election.year.desc()
             )
 
-        # total count
+        # total count BEFORE pagination
         total = query.count()
 
-        # fetch results safely for all SQLAlchemy versions
+        # 🔹 Apply pagination
         try:
-            rows = query.limit(limit).mappings().all()
+            rows = query.offset(offset).limit(limit).mappings().all()
             items = [dict(r) for r in rows]
         except AttributeError:
-            rows = query.limit(limit).all()
+            rows = query.offset(offset).limit(limit).all()
             items = [dict(r._mapping) for r in rows]
 
         return {
@@ -628,3 +613,105 @@ def create_candidate_entry(db: Session, payload) -> Dict[str, Any]:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create candidate entry: {str(exc)}"
         )
+        
+# def get_candidate_history(db, affidavit):
+#     """
+#     Optimized: Find how many times the candidate has stood in elections
+#     for the same PC (pc_name), considering age difference <= 5 years.
+#     """
+
+#     # Pre-trim + lowercase target name
+#     target_name = affidavit.candidate_name.strip().lower()
+#     target_age = float(affidavit.age or 0)
+
+#     # Fetch only needed fields (avoid loading big rows)
+#     all_affidavits = (
+#     db.query(
+#         models.Affidavit.candidate_name,
+#         models.Affidavit.age,
+#         models.Affidavit.year
+#     )
+#     .filter(models.Affidavit.pc_name.ilike(affidavit.pc_name.strip()))
+#     .filter(func.similarity(models.Affidavit.candidate_name, affidavit.candidate_name) > 0.4)  
+#     .all()
+# )
+
+#     # Use set for unique storage
+#     candidate_years = set()
+#     candidate_aliases = set()
+
+#     # Batch fuzzy match using process.extract instead of per-loop fuzz
+#     # (much faster than calling fuzz.token_sort_ratio individually)
+#     names = [a.candidate_name.strip().lower() for a in all_affidavits]
+#     matches = process.extract(
+#         target_name,
+#         names,
+#         scorer=fuzz.token_sort_ratio,
+#         score_cutoff=80  # skip bad matches quickly
+#     )
+
+#     # Map matched names back to original rows
+#     matched_names = set([m[0] for m in matches])
+
+#     for aff in all_affidavits:
+#         cand_name = aff.candidate_name.strip().lower()
+#         if cand_name in matched_names:
+#             try:
+#                 age_diff = abs(target_age - float(aff.age or 0))
+#             except Exception:
+#                 age_diff = 0
+#             if age_diff <= 5:
+#                 candidate_aliases.add(aff.candidate_name.strip())
+#                 if aff.year:
+#                     candidate_years.add(int(aff.year))
+
+#     return {
+#         "times_stood": len(candidate_years),
+#         "years": sorted(candidate_years),
+#         "aliases": sorted(candidate_aliases),
+#     }
+
+def get_candidate_history(db: Session, affidavit):
+    target_name = affidavit.candidate_name.strip().lower()
+    target_age = float(affidavit.age or 0)
+
+    all_affidavits = (
+        db.query(
+            models.Affidavit.candidate_name,
+            models.Affidavit.age,
+            models.Affidavit.year,
+        )
+        .filter(models.Affidavit.pc_name.ilike(affidavit.pc_name.strip()))
+        .filter(func.similarity(models.Affidavit.candidate_name, affidavit.candidate_name) > 0.4)
+        .all()
+    )
+
+    candidate_years = set()
+    candidate_aliases = set()
+
+    names = [a.candidate_name.strip().lower() for a in all_affidavits]
+    matches = process.extract(
+        target_name,
+        names,
+        scorer=fuzz.token_sort_ratio,
+        score_cutoff=80
+    )
+    matched_names = set(m[0] for m in matches)
+
+    for aff in all_affidavits:
+        cand_name = aff.candidate_name.strip().lower()
+        if cand_name in matched_names:
+            try:
+                age_diff = abs(target_age - float(aff.age or 0))
+            except Exception:
+                age_diff = 0
+            if age_diff <= 5:
+                candidate_aliases.add(aff.candidate_name.strip())
+                if aff.year:
+                    candidate_years.add(int(aff.year))
+
+    return {
+        "times_stood": len(candidate_years),
+        "years": sorted(candidate_years),
+        "aliases": sorted(candidate_aliases),
+    }
