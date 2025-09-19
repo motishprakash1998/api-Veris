@@ -312,6 +312,7 @@ def fetch_election_data(
 @router.get("/get_candidate_info/{candidate_id}")
 def get_candidate_data_by_id(
     candidate_id: int,
+    year: Optional[int] = Query(None),
     db: Session = Depends(get_db),
     token: str = Depends(oauth2_scheme),
 ) -> Any:
@@ -344,7 +345,7 @@ def get_candidate_data_by_id(
         # -----------------------------
         
         # 🔹 Fetch candidate record (returns list of dicts now)
-        candidate_record = controller.get_candidate_details_by_id(db, candidate_id)
+        candidate_record = controller.get_candidate_details_by_id(db, candidate_id,year)
         if not candidate_record:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

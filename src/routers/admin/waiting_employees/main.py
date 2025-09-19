@@ -5,12 +5,14 @@ from . import  schemas as waiting_schemas
 from loguru import logger
 from src.database import get_db
 from typing import List, Optional
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session , Query
 from src.routers.employees import models, schemas
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status,BackgroundTasks
 from fastapi.security import OAuth2PasswordBearer
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
 from src.utils.jwt import get_email_from_token
+from sqlalchemy import or_ , func ,String
+from src.utils.email_service import send_status_update_email
 
 
 logger = logging.getLogger(__name__)
@@ -26,8 +28,13 @@ router = APIRouter(
 def waiting_list(
     db: Session = Depends(get_db),
     token: str = Depends(oauth2_scheme),
+    limit: int = Query(10, ge=1, le=100, description="Number of records per page"),
+    offset: int = Query(0, ge=0, description="Starting index for pagination"),
+    name: Optional[str] = Query(None, description="Filter by employee name or email"),
+    state_name: Optional[str] = Query(None, description="Filter by state_name (string match)"),
+    pc_name: Optional[str] = Query(None, description="Filter by PC/Constituency name"),
 ):
-    """List all employees with status=waiting. Only accessible by admin/superadmin."""
+    """List waiting employees with pagination + filters. Only accessible by admin/superadmin."""
 
     try:
         # 🔹 Decode token
@@ -63,19 +70,43 @@ def waiting_list(
                 detail="You do not have permission to view waiting employees",
             )
 
-        # 🔹 Fetch waiting employees
-        employees = (
-            db.query(models.Employee)
-            .filter(models.Employee.status == models.StatusEnum.waiting)
-            .all()
-        )
+        # 🔹 Base query
+        query = db.query(models.Employee).filter(models.Employee.status == models.StatusEnum.waiting)
+
+        # -------------------- ✅ Apply Filters --------------------
+        if name:
+            query = query.filter(
+                or_(
+                    models.Employee.email.ilike(f"%{name}%"),
+                    models.Employee.profile.has(models.EmployeeProfile.first_name.ilike(f"%{name}%")),
+                )
+            )
+
+        if state_name:
+            query = query.join(models.Employee.profile).filter(func.lower(models.EmployeeProfile.state_name.cast(String)) == state_name.lower())
+
+        if pc_name:
+            query = query.join(models.Employee.profile).filter(
+                models.EmployeeProfile.pc_name.ilike(f"%{pc_name}%")
+            )
+        # ----------------------------------------------------------
+
+        total = query.count()
+        employees = query.order_by(models.Employee.created_at.desc()).offset(offset).limit(limit).all()
 
         if not employees:
             return {
                 "success": True,
                 "status": 200,
-                "message": "No employees are currently waiting for approval",
+                "message": "No employees found with given filters",
                 "data": [],
+                "pagination": {
+                    "total": total,
+                    "limit": limit,
+                    "offset": offset,
+                    "has_next": offset + limit < total,
+                    "has_prev": offset > 0,
+                },
             }
 
         data = [
@@ -91,12 +122,18 @@ def waiting_list(
             for e in employees
         ]
 
-        logging.info("Retrieved %d waiting employees by %s", len(employees), email)
         return {
             "success": True,
             "status": 200,
-            "message": "Waiting employees retrieved successfully",
+            "message": "Employees retrieved successfully",
             "data": data,
+            "pagination": {
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "has_next": offset + limit < total,
+                "has_prev": offset > 0,
+            },
         }
 
     except HTTPException:
@@ -113,6 +150,7 @@ def waiting_list(
 def update_permission(
     employee_id: int,
     payload: waiting_schemas.UpdatePermissionSchema,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     token: str = Depends(oauth2_scheme),
 ):
@@ -195,7 +233,15 @@ def update_permission(
             employee.status.value,
             employee.role.value if hasattr(employee.role, "value") else str(employee.role),
         )
-
+         # ✅ Background email send
+        background_tasks.add_task(
+            send_status_update_email,
+            to_email=employee.email,
+            full_name=employee.profile.first_name if employee.profile and employee.profile.first_name else employee.email,
+            approved=(employee.status == models.StatusEnum.active),
+            state_name=profile.state_name,
+            pc_name=profile.pc_name,
+        )
         return schemas.EmployeeData(
             id=employee.id,
             email=employee.email,

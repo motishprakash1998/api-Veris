@@ -43,7 +43,7 @@ jobs:
             # Activate the veris virtual environment
             source ~/veris/bin/activate
             # Install/update dependencies
-            pip install -r requirements.txt
+            pip3 install -r requirements.txt
             # Restart FastAPI service using PM2
             pm2 restart api-veris || pm2 start main:app --name api-veris --interpreter python3
             pm2 save
