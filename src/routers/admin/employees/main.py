@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends , HTTPException, status
-from typing import List
-from sqlalchemy.orm import Session
+from typing import List 
+from sqlalchemy.orm import Session ,Query
 from . import schemas as employee_admin_schemas
 from src.database import get_db
 from src.routers.employees import models, schemas
@@ -21,6 +21,8 @@ router = APIRouter(
 def employees_list(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
+    limit: int = Query(10, ge=1, le=100),   # 🔹 default 10, max 100
+    offset: int = Query(0, ge=0),           # 🔹 default 0
 ):
     """
     Retrieve a list of all active employees.
@@ -67,18 +69,26 @@ def employees_list(
             }
 
         # 🔹 Fetch employees with status = active
-        employees = (
-                db.query(models.Employee)
-                .filter(models.Employee.status.in_([models.StatusEnum.active, models.StatusEnum.inactive]))
-                .all()
-            )
+        query = (
+            db.query(models.Employee)
+            .filter(models.Employee.status.in_([models.StatusEnum.active, models.StatusEnum.inactive]))
+            .order_by(models.Employee.created_at.desc())  # newest first
+        )
+        total = query.count()  # total before pagination
 
+        employees = query.offset(offset).limit(limit).all()
+        
         if not employees:
             return {
                 "success": True,
                 "status": status.HTTP_200_OK,
                 "message": "No active employees found",
                 "data": [],
+                "pagination": {
+                    "total": total,
+                    "limit": limit,
+                    "offset": offset,
+            },
             }
 
         logging.info("Admin %s retrieved %d employees", email, len(employees))
@@ -101,6 +111,13 @@ def employees_list(
             "status": status.HTTP_200_OK,
             "message": "Active employees retrieved successfully",
             "data": data,
+            "pagination": {
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "has_next": offset + limit < total,
+                "has_prev": offset > 0,
+            },
         }
 
     except Exception as e:

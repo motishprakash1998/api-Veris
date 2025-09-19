@@ -126,3 +126,113 @@ def send_account_creation_email(to_email: str, full_name: str, support_email: st
 
     except Exception as exc:
         logging.exception("Failed to send account creation email to %s: %s", to_email, exc)
+        
+
+
+STATUS_UPDATE_HTML_TEMPLATE = """
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Access Request Update</title>
+    <style>
+      body {{ font-family: Arial, sans-serif; margin:0; padding:0; background:#f5f7fa; }}
+      .container {{ max-width:600px; margin:28px auto; background:#fff; border-radius:8px;
+                   box-shadow:0 2px 6px rgba(0,0,0,0.08); overflow:hidden; }}
+      .header {{ background:#0b5fff; color:#fff; padding:20px; }}
+      .content {{ padding:24px; color:#0f1724; line-height:1.5; }}
+      .footer {{ padding:16px; font-size:13px; color:#6b7280; background:#fafafa; text-align:center; }}
+      .status {{ font-weight:600; color:{status_color}; }}
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>Access Request Update</h1>
+      </div>
+      <div class="content">
+        <p>Dear {full_name},</p>
+        <p>Your access request has been <span class="status">{status_text}</span>.</p>
+        {extra_info}
+        <p style="margin-top:18px;">Thank you,<br>{org_name}</p>
+      </div>
+      <div class="footer">
+        This is an automated message from {org_name}. Please do not reply.
+      </div>
+    </div>
+  </body>
+</html>
+"""
+
+STATUS_UPDATE_PLAIN_TEXT_TEMPLATE = """
+Dear {full_name},
+
+Your access request has been {status_text}.
+{extra_info}
+
+Thank you,
+{org_name}
+"""
+
+
+
+def send_status_update_email(to_email: str, full_name: str, approved: bool, state_name: str = None, pc_name: str = None, org_name: str = ORG_NAME):
+    """
+    Send professional HTML + plain-text email for access approval/rejection.
+    """
+    try:
+        logger.info(f"[EMAIL TASK] Sending status update email to {to_email} ({full_name})")
+
+        subject = "Your Access Request Status"
+        status_text = "APPROVED ✅" if approved else "REJECTED ❌"
+        status_color = "#16a34a" if approved else "#dc2626"
+
+        if approved:
+            extra_info = f"""
+            <p>You have been assigned:</p>
+            <ul>
+              <li><strong>State:</strong> {state_name}</li>
+              <li><strong>Parliamentary Constituency:</strong> {pc_name}</li>
+            </ul>
+            """
+            extra_info_plain = f"\nAssigned State: {state_name}\nAssigned PC: {pc_name}\n"
+        else:
+            extra_info = "<p>Please contact the administrator for further details.</p>"
+            extra_info_plain = "\nPlease contact the administrator for further details.\n"
+
+        # Build message
+        msg = MIMEMultipart("alternative")
+        msg["From"] = SMTP_USERNAME
+        msg["To"] = to_email
+        msg["Subject"] = subject
+
+        # Render templates
+        html_body = STATUS_UPDATE_HTML_TEMPLATE.format(
+            full_name=full_name,
+            status_text=status_text,
+            status_color=status_color,
+            extra_info=extra_info,
+            org_name=org_name,
+        )
+        text_body = STATUS_UPDATE_PLAIN_TEXT_TEMPLATE.format(
+            full_name=full_name,
+            status_text=status_text,
+            extra_info=extra_info_plain,
+            org_name=org_name,
+        )
+
+        # Attach
+        msg.attach(MIMEText(text_body, "plain"))
+        msg.attach(MIMEText(html_body, "html"))
+
+        # Send
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.starttls()
+            server.login(SMTP_USERNAME, SMTP_PASSWORD)
+            server.send_message(msg)
+
+        logger.info(f"Status update email sent to {to_email}")
+
+    except Exception as exc:
+        logging.exception("Failed to send status update email to %s: %s", to_email, exc)
