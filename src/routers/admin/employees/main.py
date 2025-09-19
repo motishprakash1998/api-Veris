@@ -1,6 +1,6 @@
-from fastapi import APIRouter, Depends , HTTPException, status
+from fastapi import APIRouter, Depends , HTTPException, status ,Query 
 from typing import List 
-from sqlalchemy.orm import Session ,Query
+from sqlalchemy.orm import Session
 from . import schemas as employee_admin_schemas
 from src.database import get_db
 from src.routers.employees import models, schemas

@@ -5,9 +5,9 @@ from . import  schemas as waiting_schemas
 from loguru import logger
 from src.database import get_db
 from typing import List, Optional
-from sqlalchemy.orm import Session , Query
+from sqlalchemy.orm import Session 
 from src.routers.employees import models, schemas
-from fastapi import APIRouter, Depends, HTTPException, status,BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status,BackgroundTasks,Query
 from fastapi.security import OAuth2PasswordBearer
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
 from src.utils.jwt import get_email_from_token
