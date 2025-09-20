@@ -23,7 +23,8 @@ def get_election_services(
     min_age: Optional[float] = None,
     max_age: Optional[float] = None,
     year: Optional[int] = None,
-    status: Optional[str] = "active",
+    status: Optional[str] = None,
+    verification_status:Optional[str]= "under_review",
     limit: int = 10,
     offset: int = 0,   # ✅ NEW
 ):
@@ -54,6 +55,7 @@ def get_election_services(
                 (models.Result.is_deleted == False, "active"),
                 (models.Result.is_deleted == True, "inactive"),
                 ).label("status"),
+                models.Result.verification_status.label("verification_status"),
                 )
             .join(models.Constituency, models.Constituency.state_id == models.State.state_id)
             .join(models.Election, models.Election.pc_id == models.Constituency.pc_id)
@@ -65,13 +67,20 @@ def get_election_services(
         # query = query.filter(models.Result.is_deleted == False)
 
         filters = []
-        # # 🔹 Status filter
-        # if status == "active":
-        #     filters.append(models.Result.is_deleted == False)
-        # elif status == "inactive":
-        #     filters.append(models.Result.is_deleted == True)
 
         # 🔹 Apply filters (same as before)...
+        
+        # 🔹 Status filter (soft-delete)
+        if status is not None:
+            if status.lower() == "active":
+                filters.append(models.Result.is_deleted == False)
+            elif status.lower() == "inactive":
+                filters.append(models.Result.is_deleted == True)
+
+        # 🔹 Verification status filter
+        if verification_status:
+            filters.append(models.Result.verification_status == verification_status)
+            
         if pc_name:
             filters.append(func.lower(models.Constituency.pc_name).like(f"%{pc_name.lower()}%"))
         if state_name:
@@ -95,7 +104,7 @@ def get_election_services(
             filters.append(models.Candidate.age >= min_age)
         elif max_age is not None:
             filters.append(models.Candidate.age <= max_age)
-
+        
         if filters:
             query = query.filter(*filters)
 
