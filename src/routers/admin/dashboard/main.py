@@ -19,7 +19,7 @@ router = APIRouter(
 
 
 
-@router.get("/dashboard", response_model=schemas.DashboardResponse)
+@router.get("/dashboard")
 def dashboard(
     filters: schemas.CommonFilters = Depends(),
     db: Session = Depends(get_db),
@@ -28,4 +28,12 @@ def dashboard(
     Dashboard-style API that returns all datasets together.
     Calls the wrapper function from crud.
     """
-    return controllers.get_dashboard_data(db, filters)
+    employee_data = controllers.get_dashboard_data(db,filters)
+    logging.error(f"Employee data :{employee_data}")
+    dashboard_response_data = {"success": True,
+                                "status": 200,
+                                "message": "Dashboard data fetched.",
+                                "data": employee_data
+                }
+    logging.error(f"dashboard_response_data:: {dashboard_response_data}")
+    return dashboard_response_data

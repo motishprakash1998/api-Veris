@@ -23,7 +23,9 @@ def get_election_services(
     min_age: Optional[float] = None,
     max_age: Optional[float] = None,
     year: Optional[int] = None,
-    status: Optional[str] = "active",
+    status: Optional[str] = None,
+    verification_status:Optional[str]= "under_review",
+    candidate_name:Optional[str]= None,
     limit: int = 10,
     offset: int = 0,   # ✅ NEW
 ):
@@ -54,6 +56,7 @@ def get_election_services(
                 (models.Result.is_deleted == False, "active"),
                 (models.Result.is_deleted == True, "inactive"),
                 ).label("status"),
+                models.Result.verification_status.label("verification_status"),
                 )
             .join(models.Constituency, models.Constituency.state_id == models.State.state_id)
             .join(models.Election, models.Election.pc_id == models.Constituency.pc_id)
@@ -65,13 +68,21 @@ def get_election_services(
         # query = query.filter(models.Result.is_deleted == False)
 
         filters = []
-        # # 🔹 Status filter
-        # if status == "active":
-        #     filters.append(models.Result.is_deleted == False)
-        # elif status == "inactive":
-        #     filters.append(models.Result.is_deleted == True)
 
         # 🔹 Apply filters (same as before)...
+        
+        # 🔹 Status filter (soft-delete)
+        if status is not None:
+            if status.lower() == "active":
+                filters.append(models.Result.is_deleted == False)
+            elif status.lower() == "inactive":
+                filters.append(models.Result.is_deleted == True)
+
+        # 🔹 Verification status filter
+        if verification_status:
+            filters.append(models.Result.verification_status == verification_status)
+        if candidate_name is not None:
+            filter.append(func.lower(models.Candidate.candidate_name).like(f"%{candidate_name.lower()}%"))
         if pc_name:
             filters.append(func.lower(models.Constituency.pc_name).like(f"%{pc_name.lower()}%"))
         if state_name:
@@ -95,7 +106,7 @@ def get_election_services(
             filters.append(models.Candidate.age >= min_age)
         elif max_age is not None:
             filters.append(models.Candidate.age <= max_age)
-
+        
         if filters:
             query = query.filter(*filters)
 
@@ -198,6 +209,27 @@ def get_candidate_details_by_id(
     ]
     if not candidate_ids:
         return None
+        
+    from collections import defaultdict
+
+    rows = (
+        db.query(models.Result.candidate_id, models.Election.year)
+        .join(models.Election, models.Election.election_id == models.Result.election_id)
+        .filter(models.Result.candidate_id.in_(candidate_ids))
+        .filter(models.Result.is_deleted == False)   # same filter as results
+        .distinct()  # distinct (candidate_id, year)
+        .order_by(models.Result.candidate_id, models.Election.year.desc())
+        .all()
+    )
+    # rows looks like [(123, 2024), (123, 2019), (456, 2024), ...]
+
+    years_by_candidate = defaultdict(list)
+    for cid, yr in rows:
+        years_by_candidate[cid].append(int(yr))
+
+    # # If you want plain dict:
+    # years_by_candidate = {cid: years_by_candidate[cid] for cid in years_by_candidate}
+
 
     # Step 4: fetch results
     query = (
@@ -249,10 +281,13 @@ def get_candidate_details_by_id(
             "total_votes": result.total_votes,
             "total_electors": constituency.total_electors if constituency else None,
             "year": election.year if election else None,
+            "election_year":years_by_candidate
         })
+        
+    logger.error(f"Election years is : {years_by_candidate}")
 
     return items
-
+    
 def update_election_service_by_candidate(
     db: Session,
     candidate_id: int,

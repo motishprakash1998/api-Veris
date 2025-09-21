@@ -17,5 +17,8 @@ def _to_dict(obj: AffidavitModel) -> Dict[str, Any]:
         "year": obj.year,
         "pc_name": obj.pc_name,
         "state_name": obj.state_name,
+        "status":"inactive" if obj.is_deleted else "active",
+        "verification_status":obj.verification_status
+        
     }
 

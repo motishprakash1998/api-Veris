@@ -40,7 +40,9 @@ class AffidavitUpdate(BaseModel):
     year: Optional[int] = None
     pc_name: Optional[str] = Field(None, max_length=255)
     state_name: Optional[str] = Field(None, max_length=255)
-    candidate_history: Optional[CandidateHistory] = None  
+    candidate_history: Optional[CandidateHistory] = None 
+    status: Optional[str] = None
+    verification_status :Optional[str] = None 
     
 
 

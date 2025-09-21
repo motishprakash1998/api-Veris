@@ -1,6 +1,6 @@
 # app/models.py
 
-from sqlalchemy import Column, Integer, String, Float, BigInteger, ForeignKey,Boolean, DateTime
+from sqlalchemy import Column, Integer, String, Float, BigInteger, ForeignKey,Boolean, DateTime,Enum
 from sqlalchemy.orm import relationship, declarative_base
 
 Base = declarative_base()
@@ -107,6 +107,19 @@ class Result(Base):
      # Soft-delete fields
     is_deleted = Column(Boolean, nullable=False, default=False)
     deleted_at = Column(DateTime, nullable=True)
+    
+    # ✅ Verification status with rejection handling
+    verification_status = Column(
+        Enum(
+            "under_review",
+            "verified_employee",
+            "verified_admin",
+            "rejected_admin",
+            name="verification_status_enum"
+        ),
+        nullable=False,
+        default="under_review"
+    )
 
 
 # -------------------------

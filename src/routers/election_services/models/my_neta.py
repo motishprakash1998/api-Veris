@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, BigInteger, Numeric, Text, UniqueConstraint, JSON
+from sqlalchemy import Column, Integer, String, BigInteger, Numeric, Text, UniqueConstraint, JSON,Enum,Boolean,DateTime
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
@@ -23,6 +23,22 @@ class Affidavit(Base):
     
     # Candidate history column
     candidate_history = Column(JSON, nullable=True) 
+       # Soft-delete fields
+    is_deleted = Column(Boolean, nullable=False, default=False)
+    deleted_at = Column(DateTime, nullable=True)
+
+    # ✅ Verification status with rejection handling
+    verification_status = Column(
+        Enum(
+            "under_review",
+            "verified_employee",
+            "verified_admin",
+            "rejected_admin",
+            name="affidavit_verification_status_enum",  # 👈 different enum name for this table
+        ),
+        nullable=False,
+        default="under_review",
+    )
     
     # Optional: prevent duplicate entries for the same candidate, year, and PC
     __table_args__ = (
