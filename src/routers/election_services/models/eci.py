@@ -112,9 +112,9 @@ class Result(Base):
     verification_status = Column(
         Enum(
             "under_review",
-            "verified_employee",
+            "verified",
             "verified_admin",
-            "rejected_admin",
+            "rejected",
             name="verification_status_enum"
         ),
         nullable=False,
