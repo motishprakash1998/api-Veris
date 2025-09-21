@@ -61,7 +61,6 @@ def to_title(value):
         return value.title()  # converts to Title Caps
     return value
 
-
 @router.post("/create_by_candidate")
 def create_candidate_endpoint(
     payload: schemas.ElectionUpdateSchema,   # use/create a dedicated Create schema if you want
@@ -270,7 +269,7 @@ def fetch_election_data(
             year = filters.year,
             candidate_name = filters.candidate_name,
             status = filters.status,
-            verification_status = verification_statuses,
+            verification_status = filters.verification_status,
             limit=filters.limit,
             offset=offset,
         )
