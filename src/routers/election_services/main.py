@@ -858,11 +858,10 @@ def get_affidavit(
 #             "aliases": aliases,   # useful for dropdown: id, year, status, verification_status, is_selected
 #         },
 #     }
-
 @router.get("/list_affidavits")
 def list_affidavits(
-    skip: int = 0,
-    limit: int = 10,
+    page: int = Query(1, ge=1, description="Page number (starts at 1)"),
+    limit: int = Query(10, ge=1, le=100, description="Items per page (max 100)"),
     db: Session = Depends(get_db),
     token: str = Depends(oauth2_scheme),
 
@@ -879,10 +878,10 @@ def list_affidavits(
     liabilities: Optional[int] = Query(None),
 ):
     """
-    List affidavits.
+    List affidavits (page-based pagination).
     - Employee → can only see affidavits for their assigned state_name & pc_name.
     - Superadmin/Admin → can see all affidavits.
-    Pagination via skip & limit.
+    Pagination via page & limit.
     """
     try:
         email = get_email_from_token(token)
@@ -910,6 +909,7 @@ def list_affidavits(
     q = db.query(models.Affidavit)
 
     # Employee-level restrictions
+    profile = None
     if role.lower() == "employee":
         profile = db.query(employee_models.EmployeeProfile).filter(
             employee_models.EmployeeProfile.employee_id == user.id
@@ -958,8 +958,6 @@ def list_affidavits(
     # Numeric filters (exact matches). If you want ranges, you can add age_min/age_max etc.
     if age is not None:
         q = q.filter(models.Affidavit.age == age)
-        # OR for range:
-        # q = q.filter(models.Affidavit.age >= age_min, models.Affidavit.age <= age_max)
 
     if criminal_cases is not None:
         q = q.filter(models.Affidavit.criminal_cases == criminal_cases)
@@ -967,9 +965,10 @@ def list_affidavits(
     if liabilities is not None:
         q = q.filter(models.Affidavit.liabilities == liabilities)
 
-    # total + pagination
+    # total + pagination (page -> offset)
     total = q.count()
-    items = q.offset(skip).limit(limit).all()
+    offset = (page - 1) * limit
+    items = q.offset(offset).limit(limit).all()
 
     items_with_history = []
     for i in items:
@@ -980,10 +979,12 @@ def list_affidavits(
     return {
         "success": True,
         "status": status.HTTP_200_OK,
-        "message": f"Found {len(items)} affidavits (total matched: {total}).",
+        "message": f"Found {len(items)} affidavits on page {page} (total matched: {total}).",
         "data": {
             "total": total,
             "count": len(items),
+            "page": page,
+            "limit": limit,
             "items": items_with_history,
         },
     }
