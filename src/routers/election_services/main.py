@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from fastapi import Body,Query
 from src.database import  get_db
 from sqlalchemy.orm import Session
-from datetime import timedelta,datetime
+from datetime import timedelta,datetime,timezone
 from fastapi.security import OAuth2PasswordBearer
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 from fastapi import APIRouter, Depends, HTTPException,status,Request
@@ -250,6 +250,11 @@ def fetch_election_data(
         page = filters.page or 1
         offset = (page - 1) * limit
         # -----------------------------
+        # 🔹 Allowed verification statuses (we want only these)
+        # -----------------------------
+        allowed_verification_set = {"verified", "admin_verified"}
+        verification_statuses = list(allowed_verification_set)
+        # -----------------------------
         # 🔹 Call controller
         # -----------------------------
         result = controller.get_election_services(
@@ -265,7 +270,7 @@ def fetch_election_data(
             year = filters.year,
             candidate_name = filters.candidate_name,
             status = filters.status,
-            verification_status = filters.verification_status,
+            verification_status = verification_statuses,
             limit=filters.limit,
             offset=offset,
         )
