@@ -264,6 +264,8 @@ def fetch_election_data(
             max_age=filters.max_age,
             year = filters.year,
             candidate_name = filters.candidate_name,
+            status = filters.status,
+            verification_status = filters.verification_status,
             limit=filters.limit,
             offset=offset,
         )
@@ -856,7 +858,7 @@ def get_affidavit(
 @router.get("/list_affidavits")
 def list_affidavits(
     skip: int = 0,
-    limit: int = 50,
+    limit: int = 10,
     db: Session = Depends(get_db),
     token: str = Depends(oauth2_scheme),
 

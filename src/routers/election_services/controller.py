@@ -23,9 +23,9 @@ def get_election_services(
     min_age: Optional[float] = None,
     max_age: Optional[float] = None,
     year: Optional[int] = None,
+    candidate_name:Optional[str]= None,
     status: Optional[str] = None,
     verification_status:Optional[str]=None,
-    candidate_name:Optional[str]= None,
     limit: int = 10,
     offset: int = 0,   # ✅ NEW
 ):
@@ -241,7 +241,7 @@ def get_candidate_details_by_id(
             joinedload(models.Result.election).joinedload(models.Election.constituency).joinedload(models.Constituency.state),
         )
         .filter(models.Result.candidate_id.in_(candidate_ids))
-        .filter(models.Result.is_deleted == False)
+        # .filter(models.Result.is_deleted == False)
     )
 
     if year:
@@ -282,6 +282,8 @@ def get_candidate_details_by_id(
             "total_votes": result.total_votes,
             "total_electors": constituency.total_electors if constituency else None,
             "year": election.year if election else None,
+            "status":"inactive" if result.is_deleted else "active",
+            "verification_status": result.verification_status,
             "election_year":years_by_candidate
         })
         
