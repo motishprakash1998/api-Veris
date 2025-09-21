@@ -506,6 +506,7 @@ def soft_delete_candidate_record(
 ## Make the Routes for MyNeta data fetching,Updateing,deleting and storing in the database
 
 #Create a route to fetch the data:
+from sqlalchemy.exc import IntegrityError
 
 @router.post("/create_affidavit", status_code=status.HTTP_201_CREATED)
 def create_affidavit(
@@ -515,6 +516,7 @@ def create_affidavit(
 ):
     """
     Create a new affidavit entry. Unique constraint on (candidate_name, year, pc_name).
+    Also populates candidate_history using controller.get_candidate_history.
     """
     # Verify token and get user
     try:
@@ -526,13 +528,45 @@ def create_affidavit(
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
     user = db.query(employee_models.Employee).filter(employee_models.Employee.email == email).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     role = user.role.value if hasattr(user.role, "value") else str(user.role)
     if role.lower() not in ["superadmin", "admin", "employee"]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized role.")
-    # Create new affidavit
+
+    # Validate verification_status if provided in payload (role-based)
+    if getattr(payload, "verification_status", None):
+        new_vs = (payload.verification_status or "").strip()
+        allowed_vs = {"under_review", "verified_employee", "verified_admin", "rejected_admin"}
+        if new_vs not in allowed_vs:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid verification_status. Allowed: {sorted(allowed_vs)}",
+            )
+        if role.lower() == "employee":
+            allowed_for_employee = {"under_review", "verified_employee"}
+            if new_vs not in allowed_for_employee:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Employees can only set verification_status to {sorted(allowed_for_employee)}",
+                )
+
+    # Prepare new affidavit (map status -> is_deleted if provided)
+    is_deleted_flag = False
+    if getattr(payload, "status", None) is not None:
+        status_val = (payload.status or "").strip().lower()
+        if status_val == "active":
+            is_deleted_flag = False
+        elif status_val == "inactive":
+            is_deleted_flag = True
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid status. Allowed values: 'active' or 'inactive'.",
+            )
+
     new = models.Affidavit(
         candidate_name=payload.candidate_name,
         party_name=payload.party_name,
@@ -545,6 +579,10 @@ def create_affidavit(
         year=payload.year,
         pc_name=payload.pc_name,
         state_name=payload.state_name,
+        # soft-delete field
+        is_deleted=is_deleted_flag,
+        # verification_status (let DB default if not provided)
+        verification_status=payload.verification_status if getattr(payload, "verification_status", None) else None,
     )
 
     try:
@@ -553,7 +591,6 @@ def create_affidavit(
         db.refresh(new)
     except IntegrityError as e:
         db.rollback()
-        # likely unique constraint violation
         logger.error("DB IntegrityError on create_affidavit: %s", e)
         return {
             "success": False,
@@ -565,6 +602,18 @@ def create_affidavit(
         db.rollback()
         logger.exception("Unexpected error creating affidavit: %s", e)
         raise HTTPException(status_code=500, detail="Internal Server Error")
+
+    # Populate candidate_history (controller.get_candidate_history expects db + affidavit)
+    try:
+        history = controller.get_candidate_history(db, new)
+        # Save candidate_history JSON back to the row
+        new.candidate_history = history
+        db.add(new)
+        db.commit()
+        db.refresh(new)
+    except Exception as e:
+        # Non-fatal: log and continue returning created object (but do not roll back creation)
+        logger.exception("Failed to populate candidate_history for affidavit %s: %s", new.affidavit_id, e)
 
     return {
         "success": True,
@@ -661,6 +710,146 @@ def get_affidavit(
         "data": affidavit_data,
     }
 
+# @router.get("/get_affidavit/{affidavit_id}")
+# def get_affidavit(
+#     affidavit_id: int,
+#     year: Optional[int] = None,               # <-- optional year selector
+#     db: Session = Depends(get_db),
+#     token: str = Depends(oauth2_scheme),
+# ):
+#     """
+#     Get affidavit by ID.
+#     - Employee → can only access affidavits from their assigned state/pc.
+#     - Superadmin/Admin → can access all affidavits.
+
+#     Behavior:
+#     - Uses the affidavit_id to find the candidate_name (if present).
+#     - Collects all affidavits with the same candidate_name, ordered by year DESC.
+#     - By default returns the latest year affidavit for that candidate.
+#     - If `year` query param is provided, returns that year's affidavit for the same candidate (if found).
+#     """
+#     try:
+#         email = get_email_from_token(token)
+#     except Exception as e:
+#         logger.error("Token decoding failed: %s", e)
+#         raise HTTPException(
+#             status_code=status.HTTP_401_UNAUTHORIZED,
+#             detail="Invalid or expired token",
+#             headers={"WWW-Authenticate": "Bearer"},
+#         )
+
+#     # Fetch user
+#     user = db.query(employee_models.Employee).filter(
+#         employee_models.Employee.email == email
+#     ).first()
+#     if not user:
+#         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+#     role = user.role.value if hasattr(user.role, "value") else str(user.role)
+
+#     if role.lower() not in ["superadmin", "admin", "employee"]:
+#         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized role.")
+
+#     # 1) Fetch the requested affidavit to get candidate_name and to validate existence
+#     base_q = db.query(models.Affidavit).filter(models.Affidavit.affidavit_id == affidavit_id)
+
+#     # If employee, restrict access by assigned state/pc for initial fetch
+#     if role.lower() == "employee":
+#         profile = db.query(employee_models.EmployeeProfile).filter(
+#             employee_models.EmployeeProfile.employee_id == user.id
+#         ).first()
+#         assigned_state = (profile.state_name or "").strip().lower() if profile and profile.state_name else None
+#         assigned_pc = (profile.pc_name or "").strip().lower() if profile and profile.pc_name else None
+
+#         if not assigned_state and not assigned_pc:
+#             raise HTTPException(
+#                 status_code=status.HTTP_403_FORBIDDEN,
+#                 detail="You are not assigned any state or constituency. Please contact support.",
+#             )
+
+#         # restrict initial fetch
+#         if assigned_state:
+#             base_q = base_q.filter(models.Affidavit.state_name.ilike(f"%{assigned_state}%"))
+#         if assigned_pc:
+#             base_q = base_q.filter(models.Affidavit.pc_name.ilike(f"%{assigned_pc}%"))
+
+#     obj = base_q.first()
+
+#     if not obj:
+#         return {
+#             "success": False,
+#             "status": status.HTTP_404_NOT_FOUND,
+#             "message": "Affidavit not found or not accessible.",
+#             "data": None,
+#         }
+
+#     # If candidate_name exists, find all affidavits for same candidate (aliases)
+#     candidate_name = (obj.candidate_name or "").strip()
+#     aliases = []
+#     selected_obj = obj  # default fallback
+
+#     if candidate_name:
+#         # build query to get all affidavits with same candidate name (case-insensitive)
+#         aliases_q = db.query(models.Affidavit).filter(
+#             func.lower(models.Affidavit.candidate_name) == candidate_name.lower()
+#         )
+
+#         # apply employee-level restrictions to alias list too
+#         if role.lower() == "employee":
+#             if assigned_state:
+#                 aliases_q = aliases_q.filter(models.Affidavit.state_name.ilike(f"%{assigned_state}%"))
+#             if assigned_pc:
+#                 aliases_q = aliases_q.filter(models.Affidavit.pc_name.ilike(f"%{assigned_pc}%"))
+
+#         # order by year desc so the first is the latest
+#         aliases_q = aliases_q.order_by(models.Affidavit.year.desc())
+
+#         alias_rows = aliases_q.all()
+
+#         # build simple alias metadata for dropdowns
+#         for a in alias_rows:
+#             aliases.append(
+#                 {
+#                     "affidavit_id": a.affidavit_id,
+#                     "year": a.year,
+#                     "status": "inactive" if a.is_deleted else "active",
+#                     "verification_status": a.verification_status,
+#                 }
+#             )
+
+#         # If year param provided: try to pick that affidavit (for same candidate)
+#         if year is not None:
+#             match = next((a for a in alias_rows if a.year == year), None)
+#             if not match:
+#                 return {
+#                     "success": False,
+#                     "status": status.HTTP_404_NOT_FOUND,
+#                     "message": f"No affidavit found for candidate '{candidate_name}' in year {year}.",
+#                     "data": None,
+#                 }
+#             selected_obj = match
+#         else:
+#             # default: choose top (latest) year if present
+#             if alias_rows:
+#                 selected_obj = alias_rows[0]
+
+#     # prepare response
+#     affidavit_data = _to_dict(selected_obj)
+#     affidavit_data["candidate_history"] = controller.get_candidate_history(db, selected_obj)
+
+#     # annotate aliases with which one is selected
+#     for alias in aliases:
+#         alias["is_selected"] = alias["affidavit_id"] == selected_obj.affidavit_id
+
+#     return {
+#         "success": True,
+#         "status": status.HTTP_200_OK,
+#         "message": "Affidavit retrieved.",
+#         "data": {
+#             "affidavit": affidavit_data,
+#             "aliases": aliases,   # useful for dropdown: id, year, status, verification_status, is_selected
+#         },
+#     }
 
 @router.get("/list_affidavits")
 def list_affidavits(
@@ -668,11 +857,23 @@ def list_affidavits(
     limit: int = 50,
     db: Session = Depends(get_db),
     token: str = Depends(oauth2_scheme),
+
+    # Filters
+    candidate_name: Optional[str] = Query(None, description="Partial or full candidate name"),
+    year: Optional[int] = Query(None),
+    state_name: Optional[str] = Query(None),
+    pc_name: Optional[str] = Query(None),
+    status_filter: Optional[str] = Query(None, description="active / inactive"),
+    verification_status: Optional[str] = Query(None, description="under_review / verified_employee / verified_admin / rejected_admin"),
+    party_name: Optional[str] = Query(None),
+    age: Optional[float] = Query(None, description="Exact age. Use min/max code if you want range."),
+    criminal_cases: Optional[int] = Query(None),
+    liabilities: Optional[int] = Query(None),
 ):
     """
     List affidavits.
     - Employee → can only see affidavits for their assigned state_name & pc_name.
-    - Superadmin/Admin → can see all affidavits (no filters applied).
+    - Superadmin/Admin → can see all affidavits.
     Pagination via skip & limit.
     """
     try:
@@ -700,8 +901,8 @@ def list_affidavits(
     # Base query
     q = db.query(models.Affidavit)
 
+    # Employee-level restrictions
     if role.lower() == "employee":
-        # Get assigned state & pc
         profile = db.query(employee_models.EmployeeProfile).filter(
             employee_models.EmployeeProfile.employee_id == user.id
         ).first()
@@ -715,16 +916,53 @@ def list_affidavits(
                 detail="You are not assigned any state or constituency. Please contact support.",
             )
 
-        # Restrict employee to assigned state & pc
         if assigned_state:
             q = q.filter(models.Affidavit.state_name.ilike(f"%{assigned_state}%"))
         if assigned_pc:
             q = q.filter(models.Affidavit.pc_name.ilike(f"%{assigned_pc}%"))
 
-    # else → superadmin/admin → no filter, fetch everything
+    # Build filters from query params
+    if candidate_name:
+        q = q.filter(models.Affidavit.candidate_name.ilike(f"%{candidate_name.strip()}%"))
+    if year is not None:
+        q = q.filter(models.Affidavit.year == year)
+    if state_name:
+        q = q.filter(models.Affidavit.state_name.ilike(f"%{state_name.strip()}%"))
+    if pc_name:
+        q = q.filter(models.Affidavit.pc_name.ilike(f"%{pc_name.strip()}%"))
+    if party_name:
+        q = q.filter(models.Affidavit.party_name.ilike(f"%{party_name.strip()}%"))
 
+    # Status mapping: expect "active" or "inactive"
+    if status_filter is not None:
+        sf = status_filter.strip().lower()
+        if sf == "active":
+            q = q.filter(models.Affidavit.is_deleted == False)
+        elif sf == "inactive":
+            q = q.filter(models.Affidavit.is_deleted == True)
+        else:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="status must be 'active' or 'inactive'")
+
+    # Verification status exact match (enum/string)
+    if verification_status:
+        q = q.filter(models.Affidavit.verification_status == verification_status)
+
+    # Numeric filters (exact matches). If you want ranges, you can add age_min/age_max etc.
+    if age is not None:
+        q = q.filter(models.Affidavit.age == age)
+        # OR for range:
+        # q = q.filter(models.Affidavit.age >= age_min, models.Affidavit.age <= age_max)
+
+    if criminal_cases is not None:
+        q = q.filter(models.Affidavit.criminal_cases == criminal_cases)
+
+    if liabilities is not None:
+        q = q.filter(models.Affidavit.liabilities == liabilities)
+
+    # total + pagination
     total = q.count()
     items = q.offset(skip).limit(limit).all()
+
     items_with_history = []
     for i in items:
         d = _to_dict(i)
@@ -797,6 +1035,55 @@ def update_affidavit(
     # Apply updates
     update_data = payload.dict(exclude_unset=True)
     
+    # -----------------------
+    # Handle status (map to is_deleted)
+    # ------------------------
+    if "status" in update_data:
+        status_val = (update_data.pop("status") or "").strip().lower()
+        if status_val == "active":
+            obj.is_deleted = False
+        elif status_val == "inactive":
+            obj.is_deleted = True
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid status. Allowed values: 'active' or 'inactive'.",
+            )
+
+    # ------------------------
+    # Handle verification_status with validation & role restrictions
+    # ------------------------
+    if "verification_status" in update_data:
+        new_vs = (update_data.pop("verification_status") or "").strip()
+
+        # Allowed statuses (keep these in sync with your DB enum)
+        allowed_vs = {
+            "under_review",
+            "verified_employee",
+            "verified_admin",
+            "rejected_admin",
+        }
+
+        if new_vs not in allowed_vs:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid verification_status. Allowed values: {sorted(allowed_vs)}",
+            )
+
+        # Role-based restrictions
+        if role.lower() in {"superadmin", "admin"}:
+            # admin can set any allowed status
+            obj.verification_status = new_vs
+        else:
+            # employee: restrict what they can set
+            allowed_for_employee = {"under_review", "verified_employee"}
+            if new_vs not in allowed_for_employee:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Employees can only set verification_status to {sorted(allowed_for_employee)}",
+                )
+            obj.verification_status = new_vs
+    
     # Handle candidate_history separately
     if "candidate_history" in update_data:
         obj.candidate_history = update_data.pop("candidate_history")
@@ -846,13 +1133,16 @@ def delete_affidavit(
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
     user = db.query(employee_models.Employee).filter(employee_models.Employee.email == email).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
     role = user.role.value if hasattr(user.role, "value") else str(user.role)
     if role.lower() not in ["superadmin", "admin"]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized role.")
-    # Fetch affidavit to delete
+
+    # Fetch affidavit to soft-delete
     obj = db.query(models.Affidavit).filter(models.Affidavit.affidavit_id == affidavit_id).first()
     if not obj:
         return {
@@ -862,21 +1152,39 @@ def delete_affidavit(
             "data": None,
         }
 
+    # If already soft-deleted, return a clear response
+    if getattr(obj, "is_deleted", False):
+        return {
+            "success": False,
+            "status": status.HTTP_400_BAD_REQUEST,
+            "message": "Affidavit is already deleted (soft-deleted).",
+            "data": {"affidavit_id": affidavit_id},
+        }
+
     try:
-        db.delete(obj)
+        # Soft delete: mark deleted and set timestamp
+        obj.is_deleted = True
+        obj.deleted_at = datetime.now(timezone.utc)  # use UTC timestamp; change if you prefer local time
+        db.add(obj)
         db.commit()
+        db.refresh(obj)
     except Exception as e:
         db.rollback()
-        logger.exception("Unexpected error deleting affidavit: %s", e)
+        logger.exception("Unexpected error soft-deleting affidavit: %s", e)
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
     return {
         "success": True,
         "status": status.HTTP_200_OK,
-        "message": "Affidavit deleted successfully.",
-        "data": {"affidavit_id": affidavit_id},
-    }
-    
+        "message": "Affidavit soft-deleted successfully.",
+        "data": {
+            "affidavit_id": affidavit_id,
+            "is_deleted": obj.is_deleted,
+            "deleted_at": obj.deleted_at,
+        },
+    }    
+# -----------Updated by the candidate histories in the database--------   
+#---------------------------------------------------------------------- 
 @router.post("/update_candidate_histories")
 def update_candidate_histories(db: Session = Depends(get_db)):
     try:
@@ -916,7 +1224,6 @@ def _normalize(s: Optional[str]) -> str:
     s = re.sub(r"\s+", " ", s)
     return s
 
-
 def _phonetic_keys(s: str):
     try:
         k = phonetics.dmetaphone(s)
@@ -926,7 +1233,6 @@ def _phonetic_keys(s: str):
         return (k or "", "")
     except Exception:
         return ("", "")
-
 
 def _contextual_boost(row, input_ctx: schemas.BulkNameSearchBody) -> float:
     boost = 0.0
@@ -953,8 +1259,6 @@ def _contextual_boost(row, input_ctx: schemas.BulkNameSearchBody) -> float:
     except Exception:
         pass
     return boost
-
-
 
 @router.post("/simple_fuzzy_search_bulk")
 def simple_fuzzy_search_bulk(

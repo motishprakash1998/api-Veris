@@ -25,6 +25,7 @@ def get_election_services(
     year: Optional[int] = None,
     status: Optional[str] = None,
     verification_status:Optional[str]= "under_review",
+    candidate_name:Optional[str]= None,
     limit: int = 10,
     offset: int = 0,   # ✅ NEW
 ):
@@ -80,7 +81,8 @@ def get_election_services(
         # 🔹 Verification status filter
         if verification_status:
             filters.append(models.Result.verification_status == verification_status)
-            
+        if candidate_name is not None:
+            filter.append(func.lower(models.Candidate.candidate_name).like(f"%{candidate_name.lower()}%"))
         if pc_name:
             filters.append(func.lower(models.Constituency.pc_name).like(f"%{pc_name.lower()}%"))
         if state_name:
@@ -207,6 +209,27 @@ def get_candidate_details_by_id(
     ]
     if not candidate_ids:
         return None
+        
+    from collections import defaultdict
+
+    rows = (
+        db.query(models.Result.candidate_id, models.Election.year)
+        .join(models.Election, models.Election.election_id == models.Result.election_id)
+        .filter(models.Result.candidate_id.in_(candidate_ids))
+        .filter(models.Result.is_deleted == False)   # same filter as results
+        .distinct()  # distinct (candidate_id, year)
+        .order_by(models.Result.candidate_id, models.Election.year.desc())
+        .all()
+    )
+    # rows looks like [(123, 2024), (123, 2019), (456, 2024), ...]
+
+    years_by_candidate = defaultdict(list)
+    for cid, yr in rows:
+        years_by_candidate[cid].append(int(yr))
+
+    # # If you want plain dict:
+    # years_by_candidate = {cid: years_by_candidate[cid] for cid in years_by_candidate}
+
 
     # Step 4: fetch results
     query = (
@@ -258,10 +281,13 @@ def get_candidate_details_by_id(
             "total_votes": result.total_votes,
             "total_electors": constituency.total_electors if constituency else None,
             "year": election.year if election else None,
+            "election_year":years_by_candidate
         })
+        
+    logger.error(f"Election years is : {years_by_candidate}")
 
     return items
-
+    
 def update_election_service_by_candidate(
     db: Session,
     candidate_id: int,
