@@ -262,6 +262,8 @@ def fetch_election_data(
             sex=filters.sex,
             min_age=filters.min_age,
             max_age=filters.max_age,
+            year = filters.year,
+            candidate_name = filters.candidate_name,
             limit=filters.limit,
             offset=offset,
         )

@@ -24,7 +24,7 @@ def get_election_services(
     max_age: Optional[float] = None,
     year: Optional[int] = None,
     status: Optional[str] = None,
-    verification_status:Optional[str]= "under_review",
+    verification_status:Optional[str]=None,
     candidate_name:Optional[str]= None,
     limit: int = 10,
     offset: int = 0,   # ✅ NEW
@@ -79,7 +79,7 @@ def get_election_services(
                 filters.append(models.Result.is_deleted == True)
 
         # 🔹 Verification status filter
-        if verification_status:
+        if verification_status is not None:
             filters.append(models.Result.verification_status == verification_status)
         if candidate_name is not None:
             filter.append(func.lower(models.Candidate.candidate_name).like(f"%{candidate_name.lower()}%"))
@@ -130,6 +130,7 @@ def get_election_services(
         # 🔹 Apply pagination
         try:
             rows = query.offset(offset).limit(limit).mappings().all()
+            logger.error(f"Rows is :{rows}")
             items = [dict(r) for r in rows]
         except AttributeError:
             rows = query.offset(offset).limit(limit).all()
@@ -813,3 +814,11 @@ def get_candidate_history(db: Session, affidavit):
         "years": sorted(candidate_years),
         "aliases": sorted(candidate_aliases),
     }
+
+def to_title(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value.title()  # converts to Title Caps
+    return value
+

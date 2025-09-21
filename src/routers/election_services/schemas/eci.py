@@ -38,6 +38,8 @@ class ElectionFilters(BaseModel):
     min_age: Optional[float] = None
     max_age: Optional[float] = None
     limit: int = 10
+    year: Optional[int] = None
+    candidate_name: Optional[str] = None
     page: Optional[int] = Field(1, ge=1)  # default page=1
     limit: Optional[int] = Field(10, ge=1, le=100)  # default 10 per page
 
