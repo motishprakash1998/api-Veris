@@ -388,8 +388,30 @@ def update_candidate_data(
     candidate_id: int,
     payload: schemas.ElectionUpdateSchema,
     db: Session = Depends(get_db),
+    token: str = Depends(oauth2_scheme),
 ) -> Any:
     try:
+        # 🔹 Decode user from token
+        try:
+            email = get_email_from_token(token)
+        except Exception as e:
+            logger.error(f"Token decoding failed: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        # 🔹 Fetch user
+        user = db.query(employee_models.Employee).filter(
+            employee_models.Employee.email == email
+        ).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found",
+            )
+        role = user.role.value if hasattr(user.role, "value") else str(user.role)
+        logger.info("User %s with role %s is accessing candidate data by ID", email, role)
         # --- 1) get provided fields as dict (only set fields)
         data = payload.dict(exclude_unset=True)
 
@@ -410,6 +432,7 @@ def update_candidate_data(
             payload=wrapped_payload,
             election_id=None,      # or set if you want to target a specific election
             update_all=False,      # set True if you want to update all results
+            role = role
         )
 
         return {
@@ -632,14 +655,18 @@ def create_affidavit(
 
 @router.get("/get_affidavit/{affidavit_id}")
 def get_affidavit(
-    affidavit_id: int,
+    affidavit_id: str,  # supports single id like "123" or multiple "123,456"
     db: Session = Depends(get_db),
     token: str = Depends(oauth2_scheme),
+    year: Optional[int] = Query(None, description="Optional filter by affidavit year"),
 ):
     """
-    Get affidavit by ID.
+    Get affidavit(s) by ID(s).
+    - Path param `affidavit_id` may be a single id "123" or comma-separated "123,456".
+    - Optional query param `year` restricts results to that year (applies both to requested IDs and name-matches).
     - Employee → can only access affidavits from their assigned state/pc.
     - Superadmin/Admin → can access all affidavits.
+    Response: returns a list of affidavit objects (each with candidate_history). If multiple requested IDs found, returns them.
     """
     try:
         email = get_email_from_token(token)
@@ -663,17 +690,19 @@ def get_affidavit(
     if role.lower() not in ["superadmin", "admin", "employee"]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized role.")
 
-    # Superadmin/Admin → can fetch directly
-    if role.lower() in ["superadmin", "admin"]:
-        obj = db.query(models.Affidavit).filter(
-            models.Affidavit.affidavit_id == affidavit_id
-        ).first()
-    else:
-        # Employee → restrict to assigned state/pc
+    # Parse affidavit_id path param: allow comma-separated list
+    try:
+        requested_ids: List[int] = [int(x.strip()) for x in affidavit_id.split(",") if x.strip()]
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="affidavit_id must be integer or comma-separated integers.")
+
+    # Load employee profile info if needed
+    profile = None
+    assigned_state = assigned_pc = None
+    if role.lower() == "employee":
         profile = db.query(employee_models.EmployeeProfile).filter(
             employee_models.EmployeeProfile.employee_id == user.id
         ).first()
-
         assigned_state = (profile.state_name or "").strip().lower() if profile else None
         assigned_pc = (profile.pc_name or "").strip().lower() if profile else None
 
@@ -683,39 +712,87 @@ def get_affidavit(
                 detail="You are not assigned any state or constituency. Please contact support.",
             )
 
-        # Fetch affidavit
-        obj = db.query(models.Affidavit).filter(
-            models.Affidavit.affidavit_id == affidavit_id
-        ).first()
+    # Build base query for requested ids
+    base_filters = [models.Affidavit.affidavit_id.in_(requested_ids)]
+    if year is not None:
+        base_filters.append(models.Affidavit.year == year)
 
-        # Check assignment restriction
-        if obj:
-            state_match = assigned_state and assigned_state in (obj.state_name or "").strip().lower()
-            pc_match = assigned_pc and assigned_pc in (obj.pc_name or "").strip().lower()
+    # For non-admins, we will additionally filter by assigned state/pc for the initial requested set
+    if role.lower() in ["superadmin", "admin"]:
+        requested_objs = db.query(models.Affidavit).filter(*base_filters).all()
+    else:
+        # Employee: restrict requested set to assigned state/pc
+        requested_objs = (
+            db.query(models.Affidavit)
+            .filter(*base_filters)
+            .filter(
+                (models.Affidavit.state_name.ilike(f"%{assigned_state}%")) |
+                (models.Affidavit.pc_name.ilike(f"%{assigned_pc}%"))
+            )
+            .all()
+        )
 
-            if not (state_match or pc_match):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="You cannot access affidavits outside your assigned state/constituency.",
-                )
-
-    if not obj:
+    if not requested_objs:
         return {
             "success": False,
             "status": status.HTTP_404_NOT_FOUND,
-            "message": "Affidavit not found.",
+            "message": "No affidavits found for the given id(s) and filters.",
             "data": None,
         }
 
-    # Convert affidavit to dict and add candidate history
-    affidavit_data = _to_dict(obj)
-    affidavit_data["candidate_history"] = controller.get_candidate_history(db, obj)
+    # We'll collect all affidavits to return (requested + same-name matches)
+    all_affidavit_objs: List[models.Affidavit] = []
+    seen_ids: Set[int] = set()
+
+    for obj in requested_objs:
+        if obj.affidavit_id in seen_ids:
+            continue
+        all_affidavit_objs.append(obj)
+        seen_ids.add(obj.affidavit_id)
+
+        # Find other affidavits with same candidate_name (apply year filter if provided)
+        candidate_name = (obj.candidate_name or "").strip()
+        if candidate_name:
+            same_name_query = db.query(models.Affidavit).filter(
+                models.Affidavit.candidate_name.ilike(candidate_name)
+            )
+
+            # Exclude already included ids
+            same_name_query = same_name_query.filter(models.Affidavit.affidavit_id.notin_(list(seen_ids)))
+
+            # Apply year filter if present
+            if year is not None:
+                same_name_query = same_name_query.filter(models.Affidavit.year == year)
+
+            # For employees, limit same-name matches to their assigned state/pc
+            if role.lower() not in ["superadmin", "admin"]:
+                same_name_query = same_name_query.filter(
+                    (models.Affidavit.state_name.ilike(f"%{assigned_state}%")) |
+                    (models.Affidavit.pc_name.ilike(f"%{assigned_pc}%"))
+                )
+
+            same_name_objs = same_name_query.all()
+            for s in same_name_objs:
+                if s.affidavit_id not in seen_ids:
+                    all_affidavit_objs.append(s)
+                    seen_ids.add(s.affidavit_id)
+
+    # Convert to dicts and attach candidate_history
+    result_list = []
+    for a in all_affidavit_objs:
+        a_data = _to_dict(a)
+        try:
+            a_data["candidate_history"] = controller.get_candidate_history(db, a)
+        except Exception:
+            # don't fail entire request if history lookup fails for an item
+            a_data["candidate_history"] = []
+        result_list.append(a_data)
 
     return {
         "success": True,
         "status": status.HTTP_200_OK,
-        "message": "Affidavit retrieved.",
-        "data": affidavit_data,
+        "message": "Affidavit(s) retrieved.",
+        "data": result_list,
     }
 
 # @router.get("/get_affidavit/{affidavit_id}")
@@ -870,7 +947,7 @@ def list_affidavits(
     year: Optional[int] = Query(None),
     state_name: Optional[str] = Query(None),
     pc_name: Optional[str] = Query(None),
-    status_filter: Optional[str] = Query(None, description="active / inactive"),
+    status: Optional[str] = Query(None, description="active / inactive"),
     verification_status: Optional[str] = Query(None, description="under_review / verified_employee / verified_admin / rejected_admin"),
     party_name: Optional[str] = Query(None),
     age: Optional[float] = Query(None, description="Exact age. Use min/max code if you want range."),
@@ -942,8 +1019,8 @@ def list_affidavits(
         q = q.filter(models.Affidavit.party_name.ilike(f"%{party_name.strip()}%"))
 
     # Status mapping: expect "active" or "inactive"
-    if status_filter is not None:
-        sf = status_filter.strip().lower()
+    if status is not None:
+        sf = status.strip().lower()
         if sf == "active":
             q = q.filter(models.Affidavit.is_deleted == False)
         elif sf == "inactive":
