@@ -61,6 +61,6 @@ class ElectionUpdateSchema(BaseModel):
     over_total_votes_polled_in_constituency: Optional[float] = None
     total_electors: Optional[int] = None
     year: Optional[int] = None
-
+    status: Optional[str] = None
     class Config:
         orm_mode = True

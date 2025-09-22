@@ -6,7 +6,10 @@ import urllib.parse
 from src.routers.election_services import  models
 from src.routers.election_services import  schemas
 # from . import controller
-from src.routers.election_services.controller import get_election_services,to_title
+from src.routers.election_services.controller import (get_election_services,to_title,
+                                                      get_candidate_details_by_id,
+                                                      update_election_service_by_candidate,
+                                                      _DictPayloadWrapper)
 from loguru import logger
 from sqlalchemy import func
 from dotenv import load_dotenv
@@ -35,6 +38,7 @@ router = APIRouter(
     tags=["Election Services"],
     responses={404: {"description": "Not found"}},
 )
+
 @router.get("/verification/list")
 def fetch_election_data(
     filters: schemas.ElectionFilters = Depends(),  # ✅ schema for query params
@@ -177,6 +181,121 @@ def fetch_election_data(
                 "status": "error",
                 "status_code": 500,
                 "message": "An unexpected error occurred while processing your request.",
+                "data": {"error": str(exc)},
+            },
+        )
+
+# Create a route to get election information by ID (no role checks)
+@router.get("/verification/get_candidate_info/{candidate_id}")
+def get_candidate_data_by_id(
+    candidate_id: int,
+    year: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    token: str = Depends(oauth2_scheme),
+) -> Any:
+    """
+    Get election data by Candidate ID.
+    """
+
+    try:
+        # 🔹 Decode user from token
+        try:
+            email = get_email_from_token(token)
+        except Exception as e:
+            logger.error(f"Token decoding failed: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        # 🔹 Fetch user
+        user = db.query(employee_models.Employee).filter(
+            employee_models.Employee.email == email
+        ).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found",
+            )
+        role = user.role.value if hasattr(user.role, "value") else str(user.role)
+        logger.info("User %s with role %s is accessing candidate data by ID", email, role)
+        # -----------------------------
+        
+        # 🔹 Fetch candidate record (returns list of dicts now)
+        candidate_record = get_candidate_details_by_id(db, candidate_id,year)
+        if not candidate_record:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Candidate record not found",
+            )
+
+        # 🔹 Return record directly
+        return {
+            "success": True,
+            "status": status.HTTP_200_OK,
+            "message": "Candidate record fetched successfully",
+            "data": candidate_record,   # already JSON serializable
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Unhandled exception while fetching candidate record by ID")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "status": "error",
+                "status_code": 500,
+                "message": "An unexpected error occurred while fetching the record.",
+                "data": {"error": str(exc)},
+            },
+        )
+
+@router.put("/verification/update_by_candidate/{candidate_id}")
+def update_candidate_data(
+    candidate_id: int,
+    payload: schemas.ElectionUpdateSchema,
+    db: Session = Depends(get_db),
+) -> Any:
+    try:
+        # --- 1) get provided fields as dict (only set fields)
+        data = payload.dict(exclude_unset=True)
+
+        # --- 2) lowercase all string values (you can customize allowed fields if needed)
+        normalized = {}
+        for k, v in data.items():
+            if isinstance(v, str):
+                normalized[k] = v.strip().lower()
+            else:
+                normalized[k] = v
+
+        # --- 3) pass wrapped payload to controller (controller expects .dict())
+        wrapped_payload = _DictPayloadWrapper(normalized)
+
+        updated = update_election_service_by_candidate(
+            db=db,
+            candidate_id=candidate_id,
+            payload=wrapped_payload,
+            election_id=None,      # or set if you want to target a specific election
+            update_all=False,      # set True if you want to update all results
+        )
+
+        return {
+            "success": True,
+            "status": status.HTTP_200_OK,
+            "message": "Candidate election record updated successfully",
+            "data": updated,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Unhandled exception while updating candidate record")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "status": "error",
+                "status_code": 500,
+                "message": "An unexpected error occurred while updating.",
                 "data": {"error": str(exc)},
             },
         )
