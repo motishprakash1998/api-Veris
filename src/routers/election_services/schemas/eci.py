@@ -30,7 +30,7 @@ class ElectionServicesResponse(BaseModel):
     
 class ElectionFilters(BaseModel):
     pc_name: Optional[str] = None
-    state_name: Optional[str] = None
+    state_name: Optional[str] = "rajasthan"
     categories: Optional[List[str]] = None
     party_name: Optional[str] = None
     party_symbol: Optional[str] = None

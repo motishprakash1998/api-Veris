@@ -257,6 +257,7 @@ def fetch_election_data(
         # -----------------------------
         # 🔹 Call controller
         # -----------------------------
+        allowed_state = "rajasthan"
         result = controller.get_election_services(
             db=db,
             pc_name=allowed_pc,

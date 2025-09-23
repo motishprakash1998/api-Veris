@@ -78,18 +78,17 @@ def dashboard(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You are not assigned any state or constituency. Please contact support.",
             )
-
+        # 🔥 Override filters for employee
+        filters.state_name = assigned_state
+        filters.pc_name = assigned_pc
     # -----------------------------
     # Fetch dashboard data based on role
     # -----------------------------
-    if role.lower() in ["superadmin", "admin"]:
+    try:
         # Admin / Superadmin → ECI Data
-        data = controllers.get_dashboard_data(db, filters)
-    else:
-        # Employee → restricted data
-        data = controllers.get_dashboard_data(
-            db, filters, assigned_state=assigned_state, assigned_pc=assigned_pc
-        )
+        data = controllers.get_dashboard_data(db, filters,role)
+    except Exception as e:
+       logger.error(f"Error in geting the data.")
     try:
         dashboard_response_data = {
         "success": True,

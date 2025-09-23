@@ -613,10 +613,12 @@ def top_candidates_by_assets(session: Session, filters: Optional[CommonFilters] 
             Affidavit.total_assets
         )
         .filter(Affidavit.total_assets.isnot(None))
-        .order_by(desc(Affidavit.total_assets))
-        .limit(top_n)
     )
+
+    # <-- Apply filters before ordering/limiting
     q = _apply_affidavit_filters(q, filters)
+
+    q = q.order_by(desc(Affidavit.total_assets)).limit(top_n)
     return [
         {
             "candidate_name": r.candidate_name,
@@ -642,10 +644,10 @@ def top_candidates_by_liabilities(session: Session, filters: Optional[CommonFilt
             Affidavit.liabilities
         )
         .filter(Affidavit.liabilities.isnot(None))
-        .order_by(desc(Affidavit.liabilities))
-        .limit(top_n)
     )
+
     q = _apply_affidavit_filters(q, filters)
+    q = q.order_by(desc(Affidavit.liabilities)).limit(top_n)
     return [
         {
             "candidate_name": r.candidate_name,
@@ -667,28 +669,42 @@ def criminal_cases_summary(session: Session, filters: Optional[CommonFilters] = 
     Summary counts for criminal case buckets:
       - total_with_cases
       - average_cases
-      - median-ish (approx via percentile not implemented here; return list for frontend)
-    Also returns top offenders list (candidates with highest number of cases).
+      - top offenders (candidates with highest number of cases)
     """
+    # total records (filter-aware)
     base = session.query(func.count(Affidavit.affidavit_id)).select_from(Affidavit)
     base = _apply_affidavit_filters(base, filters)
     total = int(base.scalar() or 0)
 
-    with_cases_q = session.query(func.count(Affidavit.affidavit_id)).filter(Affidavit.criminal_cases > 0)
+    # with cases
+    with_cases_q = session.query(func.count(Affidavit.affidavit_id)).select_from(Affidavit).filter(Affidavit.criminal_cases > 0)
     with_cases_q = _apply_affidavit_filters(with_cases_q, filters)
     with_cases = int(with_cases_q.scalar() or 0)
 
-    avg_cases = session.query(func.avg(Affidavit.criminal_cases))
-    avg_cases = _apply_affidavit_filters(avg_cases, filters)
-    avg = float(avg_cases.scalar() or 0.0)
+    # average cases (filter-aware)
+    avg_cases_q = session.query(func.avg(Affidavit.criminal_cases)).select_from(Affidavit)
+    avg_cases_q = _apply_affidavit_filters(avg_cases_q, filters)
+    avg = float(avg_cases_q.scalar() or 0.0)
 
-    top_offenders = (
-        session.query(Affidavit.candidate_name, Affidavit.party_name, Affidavit.state_name, Affidavit.pc_name, Affidavit.year, Affidavit.criminal_cases)
+    # Top offenders - BUILD base query, APPLY filters, THEN order/limit
+    top_offenders_q = (
+        session.query(
+            Affidavit.candidate_name,
+            Affidavit.party_name,
+            Affidavit.state_name,
+            Affidavit.pc_name,
+            Affidavit.year,
+            Affidavit.criminal_cases
+        )
         .filter(Affidavit.criminal_cases.isnot(None))
-        .order_by(desc(Affidavit.criminal_cases))
-        .limit(10)
     )
-    top_offenders = _apply_affidavit_filters(top_offenders, filters)
+
+    # IMPORTANT: apply filters BEFORE order_by/limit
+    top_offenders_q = _apply_affidavit_filters(top_offenders_q, filters)
+
+    top_offenders_q = top_offenders_q.order_by(desc(Affidavit.criminal_cases)).limit(10)
+
+    top_offenders = top_offenders_q.all()
 
     return {
         "total_records": total,
@@ -741,8 +757,12 @@ def age_distribution(session: Session, filters: Optional[CommonFilters] = None, 
 # -------------------------
 def recent_affidavits(session: Session, filters: Optional[CommonFilters] = None, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
     """Return latest affidavits matching filters (ordered by year desc then id). Useful for admin tables."""
-    q = session.query(Affidavit).order_by(desc(Affidavit.year), desc(Affidavit.affidavit_id)).limit(limit).offset(offset)
+    q = session.query(Affidavit).order_by(desc(Affidavit.year), desc(Affidavit.affidavit_id))
+
+    # Apply filters BEFORE limit/offset
     q = _apply_affidavit_filters(q, filters)
+
+    q = q.limit(limit).offset(offset)
     rows = q.all()
     return [
         {
@@ -790,7 +810,7 @@ def build_affidavit_payload(session: Session, filters: Optional[CommonFilters] =
     return payload
 
 
-def get_dashboard_data(db: Session, filters: CommonFilters):
+def get_dashboard_data(db: Session, filters: CommonFilters,role:Optional[str]=None):
     """Top-level function used by FastAPI route. Returns combined datasets.
 
     Response keys:
@@ -798,15 +818,21 @@ def get_dashboard_data(db: Session, filters: CommonFilters):
       - employee_data: wrapper for employee counts (if applicable)
     """
     try:
+        if role != "employee":
+            employee_data = get_employee_counts(db, filters) or {}
+        else:
+            employee_data = {}
         eci_data = build_dashboard_payload(db, filters)
-        employee_data = get_employee_counts(db, filters) or {}
         my_neta_dtaa = build_affidavit_payload(db, filters) or {}
 
         response = {
             "eci_data": eci_data or {},
-            "employee_data": employee_data or {},
             "my_neta": my_neta_dtaa or {}
         }
+
+        if role.lower() != "employee":
+            response["employee_data"] = employee_data or {}
+
         logger.debug("Dashboard payload built successfully")
         return response
     except Exception as e:
