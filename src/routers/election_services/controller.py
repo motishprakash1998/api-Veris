@@ -83,7 +83,7 @@ def get_election_services(
         if verification_status is not None:
             filters.append(models.Result.verification_status == verification_status)
         if candidate_name is not None:
-            filter.append(func.lower(models.Candidate.candidate_name).like(f"%{candidate_name.lower()}%"))
+            filters.append(func.lower(models.Candidate.candidate_name).like(f"%{candidate_name.lower()}%"))
         if pc_name:
             filters.append(func.lower(models.Constituency.pc_name).like(f"%{pc_name.lower()}%"))
         if state_name:
@@ -430,7 +430,13 @@ def get_candidate_details_by_id(
         state = constituency.state if constituency else None
 
         # Build election_year mapping with string keys (keeps JSON consistent)
-        election_year_map = { str(cid): years_by_candidate.get(cid, []) for cid in candidate_ids }
+        # election_year_map = { str(cid): years_by_candidate.get(cid, []) for cid in candidate_ids }
+        # Build election_year in desired format
+        all_years = sorted(
+            {year for cid in candidate_ids for year in years_by_candidate.get(cid, [])},
+            reverse=True
+        )
+        election_year_map = {"years": all_years}
 
         item = {
             "state_name": state.state_name if state else None,
