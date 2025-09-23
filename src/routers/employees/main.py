@@ -204,30 +204,41 @@ def get_info(request: Request, db: Session = Depends(get_db),
         # Build response data
         # -------------------------
         role_value = employee.role.value if isinstance(employee.role, models.RoleEnum) else employee.role
+        status_value = employee.status.value if isinstance(employee.status, models.StatusEnum) else employee.status
+
         logging.info(f"Employee role for {employee.email}: {role_value}")
+        profile_data = None
+        if profile:
+            profile_data = schemas.EmployeeProfileData(
+                first_name=profile.first_name,
+                last_name=profile.last_name,
+                phone_number=profile.phone_number,
+                profile_path=profile.profile_path or "profile_pictures/default.png",
+                date_of_birth=profile.date_of_birth,
+                gender=profile.gender.value if profile.gender else None,
+                address=profile.address,
+                state=profile.state,
+                country=profile.country,
+                pin_code=profile.pin_code,
+                state_name=profile.state_name,
+                pc_name=profile.pc_name,
+                emergency_contact=profile.emergency_contact,
+                profile_completed=bool(profile.profile_completed),
+                created_at=profile.created_at,
+                updated_at=profile.updated_at,
+            )
+
 
         employee_data = schemas.EmployeeData(
             id=employee.id,
             email=employee.email,
-            role=employee.role,
-            status=employee.status,
-            first_name=profile.first_name if profile else None,
-            last_name=profile.last_name if profile else None,
-            phone_number=profile.phone_number if profile else None,
-            profile_path=profile.profile_path if profile else "profile_pictures/default.png",
-            date_of_birth=profile.date_of_birth if profile else None,
-            gender=profile.gender.value if profile and profile.gender else None,
-            address=profile.address if profile else None,
-            state=profile.state if profile else None,
-            country=profile.country if profile else None,
-            pin_code=profile.pin_code if profile else None,
-            state_name=profile.state_name if profile else None,
-            pc_name=profile.pc_name if profile else None,
-            emergency_contact=profile.emergency_contact if profile else None,
-            profile_completed=1 if profile and profile.profile_completed else 0,
+            role=role_value,
+            status=status_value,
             created_at=employee.created_at,
             updated_at=employee.updated_at,
+            profile=profile_data   # 👈 assign nested profile here
         )
+
 
         return schemas.EmployeeResponse(
             success=True,
