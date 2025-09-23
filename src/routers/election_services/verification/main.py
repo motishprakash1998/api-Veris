@@ -164,6 +164,7 @@ def fetch_election_data(
                         "sex": to_title(item.get("sex")),
                         # keep verification_status explicit and normalized
                         "verification_status": to_title(item.get("verification_status") or "user_review"),
+                        "data_type":to_title("eci")
                     })
                 data["items"] = formatted_items
             return result
