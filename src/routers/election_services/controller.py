@@ -452,6 +452,8 @@ def get_candidate_details_by_id(
             "total_votes": result.total_votes,
             "total_electors": constituency.total_electors if constituency else None,
             "year": election.year if election else None,
+            "over_total_electors_in_constituency":result.over_total_electors_in_constituency,
+            "over_total_votes_polled_in_constituency":result.over_total_votes_polled_in_constituency,
             "status": "inactive" if result.is_deleted else "active",
             "verification_status": result.verification_status,
             "election_year": election_year_map,
