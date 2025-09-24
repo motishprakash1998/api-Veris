@@ -975,6 +975,7 @@ def get_affidavit(
 #             "aliases": aliases,   # useful for dropdown: id, year, status, verification_status, is_selected
 #         },
 #     }
+
 @router.get("/list_affidavits")
 def list_affidavits(
     page: int = Query(1, ge=1, description="Page number (starts at 1)"),
@@ -1062,9 +1063,9 @@ def list_affidavits(
     if status is not None:
         sf = status.strip().lower()
         if sf == "active":
-            q = q.filter(models.Affidavit.is_deleted == False)
+            q = q.filter(models.Affidavit.is_deleted.is_(False))
         elif sf == "inactive":
-            q = q.filter(models.Affidavit.is_deleted == True)
+            q = q.filter(models.Affidavit.is_deleted.is_(True))
         else:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="status must be 'active' or 'inactive'")
 
