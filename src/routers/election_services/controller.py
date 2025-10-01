@@ -160,141 +160,6 @@ def get_result_by_id(db: Session, result_id: int):
     """Fetch result record by ID"""
     return db.query(models.Result).filter(models.Result.result_id == result_id).first()
 
-# def get_candidate_details_by_id(
-#     db: Session,
-#     candidate_id: int,
-#     year: Optional[int] = None   # 🔹 extra param
-# ) -> Optional[List[dict]]:
-#     """
-#     Get full election history of a candidate (same person, same constituency/PC)
-#     across years, even if candidate_id changed.
-#     If year is provided, filter by that year.
-#     If not provided, pick the latest year automatically.
-#     """
-#     # Step 1: get candidate info
-#     candidate = (
-#         db.query(models.Candidate)
-#         .join(models.Result, models.Result.candidate_id == models.Candidate.candidate_id)
-#         .join(models.Election, models.Election.election_id == models.Result.election_id)
-#         .join(models.Constituency, models.Constituency.pc_id == models.Election.pc_id)
-#         .filter(models.Candidate.candidate_id == candidate_id)
-#         .first()
-#     )
-#     if not candidate:
-#         return None
-
-#     candidate_name = candidate.candidate_name
-
-#     # Step 2: find the PC of this candidate
-#     election = (
-#         db.query(models.Election)
-#         .join(models.Result, models.Result.election_id == models.Election.election_id)
-#         .filter(models.Result.candidate_id == candidate_id)
-#         .first()
-#     )
-#     if not election:
-#         return None
-
-#     pc_id = election.pc_id  # ✅ restrict to same constituency
-
-#     # Step 3: find all candidate_ids with same name IN same PC
-#     candidate_ids = [
-#         r.candidate_id
-#         for r in (
-#             db.query(models.Result.candidate_id)
-#             .join(models.Election, models.Election.election_id == models.Result.election_id)
-#             .join(models.Candidate, models.Candidate.candidate_id == models.Result.candidate_id)
-#             .filter(func.lower(models.Candidate.candidate_name) == candidate_name.lower())
-#             .filter(models.Election.pc_id == pc_id)  # ✅ same constituency
-#             .all()
-#         )
-#     ]
-#     if not candidate_ids:
-#         return None
-        
-#     from collections import defaultdict
-
-#     rows = (
-#         db.query(models.Result.candidate_id, models.Election.year)
-#         .join(models.Election, models.Election.election_id == models.Result.election_id)
-#         .filter(models.Result.candidate_id.in_(candidate_ids))
-#         .filter(models.Result.is_deleted == False)   # same filter as results
-#         .distinct()  # distinct (candidate_id, year)
-#         .order_by(models.Result.candidate_id, models.Election.year.desc())
-#         .all()
-#     )
-#     # rows looks like [(123, 2024), (123, 2019), (456, 2024), ...]
-
-#     years_by_candidate = defaultdict(list)
-#     for cid, yr in rows:
-#         years_by_candidate[cid].append(int(yr))
-
-#     # # If you want plain dict:
-#     # years_by_candidate = {cid: years_by_candidate[cid] for cid in years_by_candidate}
-
-
-#     # Step 4: fetch results
-#     query = (
-#         db.query(models.Result)
-#         .join(models.Election, models.Election.election_id == models.Result.election_id)  # ✅ Explicit join
-#         .options(
-#             joinedload(models.Result.candidate).joinedload(models.Candidate.party),
-#             joinedload(models.Result.election).joinedload(models.Election.constituency).joinedload(models.Constituency.state),
-#         )
-#         .filter(models.Result.candidate_id.in_(candidate_ids))
-#         # .filter(models.Result.is_deleted == False)
-#     )
-
-#     if year:
-#         query = query.filter(models.Election.year == year)  # ✅ filter by year
-#     else:
-#         # Agar year nahi diya, to latest year pick karo
-#         latest_year = (
-#             db.query(func.max(models.Election.year))
-#             .join(models.Result, models.Result.election_id == models.Election.election_id)
-#             .filter(models.Result.candidate_id.in_(candidate_ids))
-#             .scalar()
-#         )
-#         if latest_year:
-#             query = query.filter(models.Election.year == latest_year)
-
-#     results = query.order_by(models.Election.year.desc()).all()
-
-#     # Step 5: format output
-#     items: List[dict] = []
-#     for result in results:
-#         candidate = result.candidate
-#         party = candidate.party if candidate else None
-#         election = result.election
-#         constituency = election.constituency if election else None
-#         state = constituency.state if constituency else None
-
-#         items.append({
-#             "state_name": state.state_name if state else None,
-#             "pc_name": constituency.pc_name if constituency else None,
-#             "candidate_name": candidate.candidate_name if candidate else None,
-#             "sex": candidate.gender if candidate else None,
-#             "age": candidate.age if candidate else None,
-#             "category": candidate.category if candidate else None,
-#             "party_name": party.party_name if party else None,
-#             "party_symbol": party.party_symbol if party else None,
-#             "general_votes": result.general_votes,
-#             "postal_votes": result.postal_votes,
-#             "total_votes": result.total_votes,
-#             "total_electors": constituency.total_electors if constituency else None,
-#             "year": election.year if election else None,
-#             "status":"inactive" if result.is_deleted else "active",
-#             "verification_status": result.verification_status,
-#             "election_year":years_by_candidate
-#         })
-        
-#     logger.error(f"Election years is : {years_by_candidate}")
-
-#     return items
-# from typing import Optional, List, Dict
-# from collections import defaultdict
-# from sqlalchemy import func, and_
-
 def get_candidate_details_by_id(
     db: Session,
     candidate_id: int,
@@ -586,12 +451,22 @@ def update_election_service_by_candidate(
         if "over_total_votes_polled_in_constituency" in data:
             result.over_total_votes_polled_in_constituency = data["over_total_votes_polled_in_constituency"]
 
-        if "status" in data:
-            result.is_deleted = False if data['status'] == "active" else True
-        if role =="employee":
-            result.verification_status == "under_review"
-        else:
-            result.verification_status == "verified_admin"
+        if role == "employee":
+            if result.verification_status == "rejected":
+                result.verification_status = "under_review"
+            elif result.verification_status == "under_review":
+                result.verification_status = "verified"   # employee approves it
+            elif result.verification_status == "verified":
+                result.verification_status = "rejected"   # employee can reject it back
+            else:
+                # fallback for any other unknown status
+                result.verification_status = "under_review"
+
+        elif role in ["admin", "superadmin"]:
+            if result.verification_status in ["under_review", "rejected", "verified"]:
+                result.verification_status = "verified_admin"
+            else:
+                result.verification_status = "verified_admin"
         # persist changes for this result (committing outside loop is fine too)
         db.add(result)
         if election:
@@ -634,6 +509,7 @@ def update_election_service_by_candidate(
             "over_total_votes_polled_in_constituency": result.over_total_votes_polled_in_constituency,
             "total_electors": constituency.total_electors if constituency else None,
             "year": election.year if election else None,
+            "verification_status": result.verification_status,
         })
 
     # return single dict for single update, or list for update_all

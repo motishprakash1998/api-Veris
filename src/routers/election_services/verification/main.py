@@ -9,7 +9,8 @@ from src.routers.election_services import  schemas
 from src.routers.election_services.controller import (get_election_services,to_title,
                                                       get_candidate_details_by_id,
                                                       update_election_service_by_candidate,
-                                                      _DictPayloadWrapper)
+                                                      _DictPayloadWrapper,
+                                                      get_candidate_history)
 from loguru import logger
 from sqlalchemy import func
 from dotenv import load_dotenv
@@ -140,16 +141,18 @@ def fetch_election_data(
             max_age=filters.max_age,
             year=filters.year,
             candidate_name=filters.candidate_name,
-            verification_status="under_review",  # <--- forced filter
+            verification_status='rejected',
             limit=limit,
             offset=offset,
         )
-
+        logger.error(f"Result is :{result}")
+        
         # -----------------------------
         # 🔹 Format response
         # -----------------------------
         if isinstance(result, dict) and "details" in result:
             data = result["details"]["data"]
+            logger.error(f"data is :{data}")
             if "items" in data:
                 formatted_items = []
                 for item in data["items"]:
@@ -185,7 +188,6 @@ def fetch_election_data(
                 "data": {"error": str(exc)},
             },
         )
-
 # Create a route to get election information by ID (no role checks)
 @router.get("/verification/get_candidate_info/{candidate_id}")
 def get_candidate_data_by_id(
@@ -257,8 +259,31 @@ def update_candidate_data(
     candidate_id: int,
     payload: schemas.ElectionUpdateSchema,
     db: Session = Depends(get_db),
+    token: str = Depends(oauth2_scheme),
 ) -> Any:
     try:
+        # 🔹 Decode user from token
+        try:
+            email = get_email_from_token(token)
+        except Exception as e:
+            logger.error(f"Token decoding failed: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        # 🔹 Fetch user
+        user = db.query(employee_models.Employee).filter(
+            employee_models.Employee.email == email
+        ).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found",
+            )
+        role = user.role.value if hasattr(user.role, "value") else str(user.role)
+        logger.info("User %s with role %s is accessing candidate data by ID", email, role)
+        
         # --- 1) get provided fields as dict (only set fields)
         data = payload.dict(exclude_unset=True)
 
@@ -279,6 +304,7 @@ def update_candidate_data(
             payload=wrapped_payload,
             election_id=None,      # or set if you want to target a specific election
             update_all=False,      # set True if you want to update all results
+            role=role
         )
 
         return {
@@ -300,3 +326,5 @@ def update_candidate_data(
                 "data": {"error": str(exc)},
             },
         )
+
+
