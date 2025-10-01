@@ -1,14 +1,14 @@
-from fastapi import APIRouter
-from fastapi import HTTPException
-from fastapi import Query
 import requests
-
 from . import controller
+from src.database import get_db
+from sqlalchemy.orm import Session
+from fastapi import APIRouter, HTTPException, Query, Depends, BackgroundTasks
 
 router = APIRouter(
     prefix="/api/instagram",
-    tags=["Election Services"],
-    responses={404: {"description": "Not found"}},)
+    tags=["Instagram Services"],
+    responses={404: {"description": "Not found"}},
+)
 
 @router.get("/")
 def root():
@@ -16,24 +16,26 @@ def root():
 
 
 @router.get("/validate", summary="Validate Instagram username and return profile info")
-def validate(username: str = Query(..., description="Instagram username to lookup")):
-    """Lookup an Instagram user via RapidAPI and return a curated JSON response.
-
-    Query parameters:
-    - username: Instagram username to fetch
-    """
+def validate(
+    username: str = Query(..., description="Instagram username to lookup"),
+    background_tasks: BackgroundTasks = None,
+    db: Session = Depends(get_db),
+):
+    """Fetch Instagram profile and schedule background fetch for posts/metrics."""
     try:
-        profile = controller.fetch_instagram_profile(username)
+        profile = controller.fetch_instagram_profile(username, db)
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except requests.exceptions.RequestException as re:
-        # network / upstream error
         raise HTTPException(status_code=502, detail=str(re))
+
+    # Kick off background job to fetch posts
+    background_tasks.add_task(controller.fetch_instagram_posts, username, db)
 
     response = {
         "success": True,
         "status": 200,
-        "message": f"Fetch the Data of {username} is successfully.",
+        "message": f"Fetched profile data for {username} successfully.",
         "data": profile,
     }
     return response
