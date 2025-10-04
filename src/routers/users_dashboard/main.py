@@ -399,7 +399,7 @@ def pc_section1(state: str = Query("Rajasthan"), db: Session = Depends(get_db)):
         counts[sn] = counts.get(sn, 0) + cnt
 
     ruling_party_sn = max(counts, key=counts.get)
-    ruling_party = PartyOut(id=1 if ruling_party_sn=="BJP" else 2,
+    ruling_party = lokh_sabha_schemas.LokhPartyOut(id=1 if ruling_party_sn=="BJP" else 2,
                             short_name=ruling_party_sn,
                             full_name="Bharatiya Janata Party" if ruling_party_sn=="BJP" else "Indian National Congress")
 
