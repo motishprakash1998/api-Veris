@@ -24,7 +24,9 @@ from src.routers.users_dashboard.models.lokh_sabha import LokhSabhaResult, Vidha
 #     PartyRepresentation, ConstituencyDetail, RepresentationBreakdown, PartyConstituenciesResponse,ElectionPerformanceOut,YearPerformance, WinningProbabilityOut
 # )
 
-from . import schemas  as lokh_sabha_schemas
+# from . import schemas  as lokh_sabha_schemas
+from src.routers.users_dashboard.schemas import lokh_sabha as lokh_sabha_schemas
+
 
 router = APIRouter(prefix="/api/users_dashboard", 
                    tags=["Users Dashboard"], 
@@ -458,7 +460,7 @@ def section1(state: str = Query("Rajasthan"), election_type: str = Query("AC"), 
 #         party=norm_party,
 #         constituencies=mp_constituencies + mla_constituencies
 #     )
-    
+
 @router.get("/pc/party_info", response_model=Section1Out)
 def pc_section1(state: str = Query("Rajasthan"), db: Session = Depends(get_db)):
     election_type = "PC"   # Lok Sabha indicator
