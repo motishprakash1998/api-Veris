@@ -441,7 +441,7 @@ def pc_section1(state: str = Query("Rajasthan"), db: Session = Depends(get_db)):
     prob_oth = 100 - (prob_bjp+prob_inc)
 
     probs = [
-        lokh_sabha_schemas.LokhWinningProbabilityOut(party=lokh_sabha_schemas.PartyOut(id=2, short_name="INC", full_name="Indian National Congress"), probability_pct=prob_inc, projected_seats=int(prob_inc/100*total_seats), seat_change=0),
+        lokh_sabha_schemas.LokhWinningProbabilityOut(party=lokh_sabha_schemas.LokhPartyOut(id=2, short_name="INC", full_name="Indian National Congress"), probability_pct=prob_inc, projected_seats=int(prob_inc/100*total_seats), seat_change=0),
         lokh_sabha_schemas.LokhWinningProbabilityOut(party=lokh_sabha_schemas.LokhPartyOut(id=1, short_name="BJP", full_name="Bharatiya Janata Party"), probability_pct=prob_bjp, projected_seats=int(prob_bjp/100*total_seats), seat_change=0),
         lokh_sabha_schemas.LokhWinningProbabilityOut(party=None, probability_pct=prob_oth, projected_seats=int(prob_oth/100*total_seats), seat_change=0)
     ]
