@@ -19,9 +19,12 @@ from .schemas.users import (
 from src.database.db import get_db
 
 from src.routers.users_dashboard.models.lokh_sabha import LokhSabhaResult, VidhanSabhaResult
-from .schemas.lokh_sabha import (
-    PartyRepresentation, ConstituencyDetail, RepresentationBreakdown, PartyConstituenciesResponse,ElectionPerformanceOut,YearPerformance, WinningProbabilityOut
-)
+
+# from .schemas.lokh_sabha import (
+#     PartyRepresentation, ConstituencyDetail, RepresentationBreakdown, PartyConstituenciesResponse,ElectionPerformanceOut,YearPerformance, WinningProbabilityOut
+# )
+
+from . import schemas  as lokh_sabha_schemas
 
 router = APIRouter(prefix="/api/users_dashboard", 
                    tags=["Users Dashboard"], 
@@ -500,7 +503,7 @@ def pc_section1(state: str = Query("Rajasthan"), db: Session = Depends(get_db)):
         winner_sn = max(data, key=data.get)
         runner_sn = sorted(data.items(), key=lambda x: x[1], reverse=True)[1][0] if len(data)>1 else "OTHERS"
 
-        recent_performance.append(ElectionPerformanceOut(
+        recent_performance.append(lokh_sabha_schemas.ElectionPerformanceOut(
             year=y,
             winner=PartyOut(id=1 if winner_sn=="BJP" else 2, short_name=winner_sn, full_name="Bharatiya Janata Party" if winner_sn=="BJP" else "Indian National Congress"),
             winner_seats=data[winner_sn],
@@ -519,13 +522,13 @@ def pc_section1(state: str = Query("Rajasthan"), db: Session = Depends(get_db)):
     prob_oth = 100 - (prob_bjp+prob_inc)
 
     probs = [
-        WinningProbabilityOut(party=PartyOut(id=2, short_name="INC", full_name="Indian National Congress"), probability_pct=prob_inc, projected_seats=int(prob_inc/100*total_seats), seat_change=0),
-        WinningProbabilityOut(party=PartyOut(id=1, short_name="BJP", full_name="Bharatiya Janata Party"), probability_pct=prob_bjp, projected_seats=int(prob_bjp/100*total_seats), seat_change=0),
-        WinningProbabilityOut(party=None, probability_pct=prob_oth, projected_seats=int(prob_oth/100*total_seats), seat_change=0)
+        lokh_sabha_schemas.WinningProbabilityOut(party=PartyOut(id=2, short_name="INC", full_name="Indian National Congress"), probability_pct=prob_inc, projected_seats=int(prob_inc/100*total_seats), seat_change=0),
+        lokh_sabha_schemas.WinningProbabilityOut(party=PartyOut(id=1, short_name="BJP", full_name="Bharatiya Janata Party"), probability_pct=prob_bjp, projected_seats=int(prob_bjp/100*total_seats), seat_change=0),
+        lokh_sabha_schemas.WinningProbabilityOut(party=None, probability_pct=prob_oth, projected_seats=int(prob_oth/100*total_seats), seat_change=0)
     ]
 
     next_expected_wins = [
-        NextExpectedWin(party=p.party if p.party else PartyOut(id=0, short_name="OTHERS", full_name="Others"),
+        lokh_sabha_schemas.NextExpectedWin(party=p.party if p.party else PartyOut(id=0, short_name="OTHERS", full_name="Others"),
                         wins_probability_pct=p.probability_pct,
                         projected_seats=p.projected_seats,
                         seat_change=p.seat_change)
@@ -535,7 +538,7 @@ def pc_section1(state: str = Query("Rajasthan"), db: Session = Depends(get_db)):
     predicted_winner = max(probs, key=lambda x: x.probability_pct).party
     predicted_confidence_pct = max(p.probability_pct for p in probs)
 
-    return Section1Out(
+    return lokh_sabha_schemas.Section1Out(
         state=state,
         election_type="PC",
         current_ruling_party=ruling_party,
