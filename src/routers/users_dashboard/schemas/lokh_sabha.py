@@ -1,109 +1,79 @@
 from pydantic import BaseModel
 from typing import List, Optional
 
-class PartyRepresentation(BaseModel):
+class LokhPartyRepresentation(BaseModel):
     party: str
     seats: int
     percentage: float
 
-class ConstituencyDetail(BaseModel):
+class LokhConstituencyDetail(BaseModel):
     name: str
     type: str
     winning_candidate: str
     party: str
     margin: float
 
-class RepresentationBreakdown(BaseModel):
-    current_mps: List[PartyRepresentation]
-    current_mlas: List[PartyRepresentation]
-    predicted_mps: List[PartyRepresentation]
-    predicted_mlas: List[PartyRepresentation]
+class LokhRepresentationBreakdown(BaseModel):
+    current_mps: List[LokhPartyRepresentation]
+    current_mlas: List[LokhPartyRepresentation]
+    predicted_mps: List[LokhPartyRepresentation]
+    predicted_mlas: List[LokhPartyRepresentation]
 
-class PartyConstituenciesResponse(BaseModel):
+class LokhPartyConstituenciesResponse(BaseModel):
     party: str
-    constituencies: List[ConstituencyDetail]
+    constituencies: List[LokhConstituencyDetail]
 
 # from pydantic import BaseModel
 # from typing import List, Optional
 
-class PartyOut(BaseModel):
+class LokhPartyOut(BaseModel):
     id: int
     short_name: str
     full_name: str
 
-class OppositionTrackOut(BaseModel):
-    party: PartyOut
+class LokhOppositionTrackOut(BaseModel):
+    party: LokhPartyOut
     governments: int
 
-class ElectionPerformanceOut(BaseModel):
+class LokhElectionPerformanceOut(BaseModel):
     year: int
-    winner: PartyOut
+    winner: LokhPartyOut
     winner_seats: int
-    runner_up: PartyOut
+    runner_up: LokhPartyOut
     runner_up_seats: int
 
-class WinningProbabilityOut(BaseModel):
-    party: Optional[PartyOut]
+class LokhWinningProbabilityOut(BaseModel):
+    party: Optional[LokhPartyOut]
     probability_pct: float
     projected_seats: int
     seat_change: int
 
-class NextExpectedWin(BaseModel):
-    party: PartyOut
+class LokhNextExpectedWin(BaseModel):
+    party: LokhPartyOut
     wins_probability_pct: float
     projected_seats: int
     seat_change: int
 
-class Section1Out(BaseModel):
+class LokhSection1Out(BaseModel):
     state: str
     election_type: str
-    current_ruling_party: PartyOut
+    current_ruling_party: LokhPartyOut
     current_ruling_year: int
     ruling_party_track_record_count: int
     total_governments: int
-    opposition_track_record: List[OppositionTrackOut]
+    opposition_track_record: List[LokhOppositionTrackOut]
     total_terms_current_ruling: int
     success_rate_pct: float
     next_election_year: int
-    recent_performance: List[ElectionPerformanceOut]
-    predicted_winner: PartyOut
+    recent_performance: List[LokhElectionPerformanceOut]
+    predicted_winner: LokhPartyOut
     predicted_confidence_pct: float
-    winning_probabilities: List[WinningProbabilityOut]
-    next_expected_wins: List[NextExpectedWin]
-
-
-
-class PartyOut(BaseModel):
-    id: int
-    short_name: str
-    full_name: str
-
-class OppositionTrackOut(BaseModel):
-    party: PartyOut
-    governments: int
-
-class ElectionPerformanceOut(BaseModel):
-    year: int
-    winner: PartyOut
-    winner_seats: int
-    runner_up: PartyOut
-    runner_up_seats: int
-
-class WinningProbabilityOut(BaseModel):
-    party: Optional[PartyOut]
-    probability_pct: float
-    projected_seats: int
-    seat_change: int
-
-class NextExpectedWin(BaseModel):
-    party: PartyOut
-    wins_probability_pct: float
-    projected_seats: int
-    seat_change: int
+    winning_probabilities: List[LokhWinningProbabilityOut]
+    next_expected_wins: List[LokhNextExpectedWin]
 
 class YearPerformance(BaseModel):
     year: int
-    winner: "PartyOut"        # assumes PartyOut is defined elsewhere
+    winner: "LokhPartyOut" 
     winner_seats: int
-    runner_up: "PartyOut"
+    runner_up: "LokhPartyOut"
     runner_up_seats: int

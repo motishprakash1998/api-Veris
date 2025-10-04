@@ -18,13 +18,8 @@ from .schemas.users import (
 )
 from src.database.db import get_db
 
-from src.routers.users_dashboard.models.lokh_sabha import LokhSabhaResult, VidhanSabhaResult
+from src.routers.users_dashboard.models.lokh_sabha import LokhSabhaResult
 
-# from .schemas.lokh_sabha import (
-#     PartyRepresentation, ConstituencyDetail, RepresentationBreakdown, PartyConstituenciesResponse,ElectionPerformanceOut,YearPerformance, WinningProbabilityOut
-# )
-
-# from . import schemas  as lokh_sabha_schemas
 from src.routers.users_dashboard.schemas import lokh_sabha as lokh_sabha_schemas
 
 
@@ -383,84 +378,6 @@ def section1(state: str = Query("Rajasthan"), election_type: str = Query("AC"), 
     )
 
 
-# # --- Current + Predicted Representation Breakdown ---
-# @router.get("/representation/breakdown", response_model=RepresentationBreakdown)
-# def get_representation_breakdown(db: Session = Depends(get_db)):
-#     # CURRENT MPs (year=2024)
-#     mp_query = db.query(LokhSabhaResult.party, func.count(LokhSabhaResult.pc_name))\
-#                  .filter(LokhSabhaResult.year == 2024)\
-#                  .group_by(LokhSabhaResult.party).all()
-
-#     mp_counts, total_mps = {}, 0
-#     for party, count in mp_query:
-#         norm = normalize_party(party)
-#         mp_counts[norm] = mp_counts.get(norm, 0) + count
-#         total_mps += count
-
-#     current_mps = [PartyRepresentation(party=p, seats=s, percentage=round(s/total_mps*100,2)) 
-#                    for p,s in mp_counts.items()]
-
-#     # CURRENT MLAs (latest assembly year)
-#     mla_query = db.query(VidhanSabhaResult.party, func.count(VidhanSabhaResult.ac_name))\
-#                   .filter(VidhanSabhaResult.year == 2023)\
-#                   .group_by(VidhanSabhaResult.party).all()
-
-#     mla_counts, total_mlas = {}, 0
-#     for party, count in mla_query:
-#         norm = normalize_party(party)
-#         mla_counts[norm] = mla_counts.get(norm, 0) + count
-#         total_mlas += count
-
-#     current_mlas = [PartyRepresentation(party=p, seats=s, percentage=round(s/total_mlas*100,2))
-#                     for p,s in mla_counts.items()]
-
-#     # --- Predicted MPs & MLAs ---
-#     # For now, naive prediction = same as current (can be enhanced with ML or past trend)
-#     predicted_mps = current_mps
-#     predicted_mlas = current_mlas
-
-#     return RepresentationBreakdown(
-#         current_mps=current_mps,
-#         current_mlas=current_mlas,
-#         predicted_mps=predicted_mps,
-#         predicted_mlas=predicted_mlas
-#     )
-
-
-# # --- Constituency Details for a Party ---
-# @router.get("/representation/party/{party_name}", response_model=PartyConstituenciesResponse)
-# def get_party_constituencies(party_name: str, db: Session = Depends(get_db)):
-#     norm_party = normalize_party(party_name)
-
-#     # MPs
-#     mp_rows = db.query(LokhSabhaResult).filter(LokhSabhaResult.year == 2024).all()
-#     mp_constituencies = [
-#         ConstituencyDetail(
-#             name=r.pc_name,
-#             type=r.pc_type,
-#             winning_candidate=r.winning_candidate,
-#             party=normalize_party(r.party),
-#             margin=float(r.margin_percent)
-#         ) for r in mp_rows if normalize_party(r.party) == norm_party
-#     ]
-
-#     # MLAs
-#     mla_rows = db.query(VidhanSabhaResult).filter(VidhanSabhaResult.year == 2023).all()
-#     mla_constituencies = [
-#         ConstituencyDetail(
-#             name=r.ac_name,
-#             type=r.ac_type,
-#             winning_candidate=r.winning_candidate,
-#             party=normalize_party(r.party),
-#             margin=float(r.margin_percent)
-#         ) for r in mla_rows if normalize_party(r.party) == norm_party
-#     ]
-
-#     return PartyConstituenciesResponse(
-#         party=norm_party,
-#         constituencies=mp_constituencies + mla_constituencies
-#     )
-
 @router.get("/pc/party_info", response_model=Section1Out)
 def pc_section1(state: str = Query("Rajasthan"), db: Session = Depends(get_db)):
     election_type = "PC"   # Lok Sabha indicator
@@ -505,11 +422,11 @@ def pc_section1(state: str = Query("Rajasthan"), db: Session = Depends(get_db)):
         winner_sn = max(data, key=data.get)
         runner_sn = sorted(data.items(), key=lambda x: x[1], reverse=True)[1][0] if len(data)>1 else "OTHERS"
 
-        recent_performance.append(lokh_sabha_schemas.ElectionPerformanceOut(
+        recent_performance.append(lokh_sabha_schemas.LokhElectionPerformanceOut(
             year=y,
-            winner=lokh_sabha_schemas.PartyOut(id=1 if winner_sn=="BJP" else 2, short_name=winner_sn, full_name="Bharatiya Janata Party" if winner_sn=="BJP" else "Indian National Congress"),
+            winner=lokh_sabha_schemas.LokhPartyOut(id=1 if winner_sn=="BJP" else 2, short_name=winner_sn, full_name="Bharatiya Janata Party" if winner_sn=="BJP" else "Indian National Congress"),
             winner_seats=data[winner_sn],
-            runner_up=lokh_sabha_schemas.PartyOut(id=1 if runner_sn=="BJP" else 2, short_name=runner_sn, full_name="Bharatiya Janata Party" if runner_sn=="BJP" else "Indian National Congress"),
+            runner_up=lokh_sabha_schemas.LokhPartyOut(id=1 if runner_sn=="BJP" else 2, short_name=runner_sn, full_name="Bharatiya Janata Party" if runner_sn=="BJP" else "Indian National Congress"),
             runner_up_seats=data.get(runner_sn,0)
         ))
 
@@ -524,13 +441,13 @@ def pc_section1(state: str = Query("Rajasthan"), db: Session = Depends(get_db)):
     prob_oth = 100 - (prob_bjp+prob_inc)
 
     probs = [
-        lokh_sabha_schemas.WinningProbabilityOut(party=lokh_sabha_schemas.PartyOut(id=2, short_name="INC", full_name="Indian National Congress"), probability_pct=prob_inc, projected_seats=int(prob_inc/100*total_seats), seat_change=0),
-        lokh_sabha_schemas.WinningProbabilityOut(party=lokh_sabha_schemas.PartyOut(id=1, short_name="BJP", full_name="Bharatiya Janata Party"), probability_pct=prob_bjp, projected_seats=int(prob_bjp/100*total_seats), seat_change=0),
-        lokh_sabha_schemas.WinningProbabilityOut(party=None, probability_pct=prob_oth, projected_seats=int(prob_oth/100*total_seats), seat_change=0)
+        lokh_sabha_schemas.LokhWinningProbabilityOut(party=lokh_sabha_schemas.PartyOut(id=2, short_name="INC", full_name="Indian National Congress"), probability_pct=prob_inc, projected_seats=int(prob_inc/100*total_seats), seat_change=0),
+        lokh_sabha_schemas.LokhWinningProbabilityOut(party=lokh_sabha_schemas.LokhPartyOut(id=1, short_name="BJP", full_name="Bharatiya Janata Party"), probability_pct=prob_bjp, projected_seats=int(prob_bjp/100*total_seats), seat_change=0),
+        lokh_sabha_schemas.LokhWinningProbabilityOut(party=None, probability_pct=prob_oth, projected_seats=int(prob_oth/100*total_seats), seat_change=0)
     ]
 
     next_expected_wins = [
-        lokh_sabha_schemas.NextExpectedWin(party=p.party if p.party else lokh_sabha_schemas.PartyOut(id=0, short_name="OTHERS", full_name="Others"),
+        lokh_sabha_schemas.LokhNextExpectedWin(party=p.party if p.party else lokh_sabha_schemas.LokhPartyOut(id=0, short_name="OTHERS", full_name="Others"),
                         wins_probability_pct=p.probability_pct,
                         projected_seats=p.projected_seats,
                         seat_change=p.seat_change)
@@ -540,7 +457,7 @@ def pc_section1(state: str = Query("Rajasthan"), db: Session = Depends(get_db)):
     predicted_winner = max(probs, key=lambda x: x.probability_pct).party
     predicted_confidence_pct = max(p.probability_pct for p in probs)
 
-    return lokh_sabha_schemas.Section1Out(
+    return lokh_sabha_schemas.LokhSection1Out(
         state=state,
         election_type="PC",
         current_ruling_party=ruling_party,
@@ -556,172 +473,4 @@ def pc_section1(state: str = Query("Rajasthan"), db: Session = Depends(get_db)):
         predicted_confidence_pct=predicted_confidence_pct,
         winning_probabilities=probs,
         next_expected_wins=next_expected_wins
-    )
-
-
-# @router.get("/pc/party_info", response_model=Section1Out)
-# def pc_party_info(state: str = Query("Rajasthan"), db: Session = Depends(get_db)):
-    election_type = "PC"  # fixed for this endpoint
-
-    # --- Latest year & total PCs in that year ---
-    latest_year, total_seats = _latest_year_total_seats(db, state)
-
-    # --- Yearly party seats (merged JNP->BJP) for the state ---
-    yearly = _yearly_party_seats(db, state)
-    if latest_year not in yearly or total_seats == 0:
-        raise HTTPException(404, detail="No PCs/seats computed for latest year")
-
-    # --- Current ruling (state-level LS leader = max seats in latest year) ---
-    latest_map = yearly[latest_year]
-    cur_sn, cur_seats, cur_runner_sn, cur_runner_seats = _winner_and_runner_up(latest_map)
-    current_party = _party_out_from_sn(cur_sn)
-
-    # --- Counts by winner across all LS cycles for this state ---
-    merged_counts: Dict[str, int] = defaultdict(int)
-    for y, seat_map in yearly.items():
-        w_sn, w_seats, r_sn, r_seats = _winner_and_runner_up(seat_map)
-        merged_counts[w_sn] += 1
-
-    ruling_sn_merged = current_party.short_name
-    ruling_track_count = int(merged_counts.get(ruling_sn_merged, 0))
-
-    # --- Total governments (number of LS cycles recorded for this state) ---
-    total_governments = int(len(yearly))
-
-    # --- Opposition track record ---
-    def party_obj(sn: str) -> PartyOut:
-        po = _party_out_from_sn(sn)
-        # If you have DB-backed Party table, you can hydrate ids/names here.
-        return po
-
-    opposition: List[OppositionTrackOut] = [
-        OppositionTrackOut(party=party_obj(sn), governments=int(w))
-        for sn, w in sorted(merged_counts.items(), key=lambda x: (-x[1], x[0]))
-        if sn != ruling_sn_merged
-    ]
-
-    success_rate_pct = round((ruling_track_count / total_governments) * 100, 2) if total_governments else 0.0
-    next_election_year = int(latest_year) + 5
-
-    # --- Recent performance (year-wise winner & runner-up with seats) ---
-    # Keep the same shape as your AC JSON. We’ll output for all available years ascending.
-    recent_performance: List[YearPerformance] = []
-    for y in sorted(yearly.keys()):
-        seat_map = yearly[y]
-        w_sn, w_seats, r_sn, r_seats = _winner_and_runner_up(seat_map)
-        recent_performance.append(
-            YearPerformance(
-                year=int(y),
-                winner=party_obj(w_sn),
-                winner_seats=int(w_seats),
-                runner_up=party_obj(r_sn),
-                runner_up_seats=int(r_seats),
-            )
-        )
-
-    # --- Dynamic probabilities (same logic as AC) ---
-    bjp_wins = int(merged_counts.get("BJP", 0))
-    inc_wins = int(merged_counts.get("INC", 0))
-    others_wins = max(0, total_governments - (bjp_wins + inc_wins))
-
-    if total_governments > 0:
-        base_bjp = bjp_wins / total_governments
-        base_inc = inc_wins / total_governments
-    else:
-        base_bjp = base_inc = 0.0
-    base_oth = max(0.0, 1.0 - (base_bjp + base_inc))
-
-    # anti-incumbency bonus: shift 10% from current to main opponent
-    bonus = 0.10
-    if ruling_sn_merged == "BJP":
-        base_inc += bonus
-    elif ruling_sn_merged == "INC":
-        base_bjp += bonus
-
-    # normalize
-    s = base_bjp + base_inc + base_oth
-    if s == 0:
-        base_bjp, base_inc, base_oth = 0.48, 0.49, 0.03
-    else:
-        base_bjp, base_inc, base_oth = base_bjp/s, base_inc/s, base_oth/s
-
-    # enforce Others floor & renormalize
-    floor_oth = 0.03
-    base_oth = max(base_oth, floor_oth)
-    rem = 1.0 - base_oth
-    denom = (base_bjp + base_inc) or 1.0
-    base_bjp = rem * (base_bjp / denom)
-    base_inc = rem * (base_inc / denom)
-
-    prob_bjp = round(base_bjp * 100, 2)
-    prob_inc = round(base_inc * 100, 2)
-    prob_oth = round(100.0 - prob_bjp - prob_inc, 2)
-
-    # --- Seats allocation from probabilities (exactly = total_seats) ---
-    seat_alloc = _largest_remainder_allocation(
-        [("INC", prob_inc), ("BJP", prob_bjp), ("OTHERS", prob_oth)],
-        total_seats
-    )
-    inc_seats = int(seat_alloc.get("INC", 0))
-    bjp_seats = int(seat_alloc.get("BJP", 0))
-    oth_seats = int(seat_alloc.get("OTHERS", 0))
-
-    # --- seat_change vs latest year seats ---
-    last_inc = int(yearly[latest_year].get("INC", 0))
-    last_bjp = int(yearly[latest_year].get("BJP", 0))
-    last_oth = max(0, total_seats - (last_inc + last_bjp))
-
-    inc_change = inc_seats - last_inc
-    bjp_change = bjp_seats - last_bjp
-    oth_change = oth_seats - last_oth
-
-    # --- PartyOut objects for probability block ---
-    inc = party_obj("INC")
-    bjp = party_obj("BJP")
-    oth = PartyOut(id=0, short_name="OTHERS", full_name="Others")
-
-    # --- predicted winner & confidence ---
-    predicted_winner = inc if prob_inc >= prob_bjp and prob_inc >= prob_oth else (bjp if prob_bjp >= prob_oth else oth)
-    predicted_confidence_pct = max(prob_inc, prob_bjp, prob_oth)
-
-    probs = [
-        WinningProbabilityOut(party=inc, probability_pct=prob_inc, projected_seats=inc_seats, seat_change=inc_change),
-        WinningProbabilityOut(party=bjp, probability_pct=prob_bjp, projected_seats=bjp_seats, seat_change=bjp_change),
-        WinningProbabilityOut(party=None, probability_pct=prob_oth, projected_seats=oth_seats, seat_change=oth_change),
-    ]
-
-    next_expected_wins = [
-        NextExpectedWin(party=inc, wins_probability_pct=prob_inc, projected_seats=inc_seats, seat_change=inc_change),
-        NextExpectedWin(party=bjp, wins_probability_pct=prob_bjp, projected_seats=bjp_seats, seat_change=bjp_change),
-        NextExpectedWin(party=oth, wins_probability_pct=prob_oth, projected_seats=oth_seats, seat_change=oth_change),
-    ]
-
-    # Rebuild opposition list (already computed above)
-    opposition = [
-        OppositionTrackOut(party=party_obj(sn), governments=int(w))
-        for sn, w in sorted(merged_counts.items(), key=lambda x: (-x[1], x[0]))
-        if sn != ruling_sn_merged
-    ]
-
-    return Section1Out(
-        state=state,
-        election_type=election_type,
-        current_ruling_party=current_party,
-        current_ruling_year=int(latest_year),
-
-        ruling_party_track_record_count=int(ruling_track_count),
-        total_governments=int(total_governments),
-        opposition_track_record=opposition,
-
-        total_terms_current_ruling=int(ruling_track_count),
-        success_rate_pct=round(success_rate_pct, 2),
-        next_election_year=int(next_election_year),
-
-        recent_performance=recent_performance,
-
-        predicted_winner=predicted_winner,
-        predicted_confidence_pct=predicted_confidence_pct,
-
-        winning_probabilities=probs,
-        next_expected_wins=next_expected_wins,
     )
