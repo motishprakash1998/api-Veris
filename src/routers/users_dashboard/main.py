@@ -505,9 +505,9 @@ def pc_section1(state: str = Query("Rajasthan"), db: Session = Depends(get_db)):
 
         recent_performance.append(lokh_sabha_schemas.ElectionPerformanceOut(
             year=y,
-            winner=PartyOut(id=1 if winner_sn=="BJP" else 2, short_name=winner_sn, full_name="Bharatiya Janata Party" if winner_sn=="BJP" else "Indian National Congress"),
+            winner=lokh_sabha_schemas.PartyOut(id=1 if winner_sn=="BJP" else 2, short_name=winner_sn, full_name="Bharatiya Janata Party" if winner_sn=="BJP" else "Indian National Congress"),
             winner_seats=data[winner_sn],
-            runner_up=PartyOut(id=1 if runner_sn=="BJP" else 2, short_name=runner_sn, full_name="Bharatiya Janata Party" if runner_sn=="BJP" else "Indian National Congress"),
+            runner_up=lokh_sabha_schemas.PartyOut(id=1 if runner_sn=="BJP" else 2, short_name=runner_sn, full_name="Bharatiya Janata Party" if runner_sn=="BJP" else "Indian National Congress"),
             runner_up_seats=data.get(runner_sn,0)
         ))
 
@@ -522,8 +522,8 @@ def pc_section1(state: str = Query("Rajasthan"), db: Session = Depends(get_db)):
     prob_oth = 100 - (prob_bjp+prob_inc)
 
     probs = [
-        lokh_sabha_schemas.WinningProbabilityOut(party=PartyOut(id=2, short_name="INC", full_name="Indian National Congress"), probability_pct=prob_inc, projected_seats=int(prob_inc/100*total_seats), seat_change=0),
-        lokh_sabha_schemas.WinningProbabilityOut(party=PartyOut(id=1, short_name="BJP", full_name="Bharatiya Janata Party"), probability_pct=prob_bjp, projected_seats=int(prob_bjp/100*total_seats), seat_change=0),
+        lokh_sabha_schemas.WinningProbabilityOut(party=lokh_sabha_schemas.PartyOut(id=2, short_name="INC", full_name="Indian National Congress"), probability_pct=prob_inc, projected_seats=int(prob_inc/100*total_seats), seat_change=0),
+        lokh_sabha_schemas.WinningProbabilityOut(party=lokh_sabha_schemas.PartyOut(id=1, short_name="BJP", full_name="Bharatiya Janata Party"), probability_pct=prob_bjp, projected_seats=int(prob_bjp/100*total_seats), seat_change=0),
         lokh_sabha_schemas.WinningProbabilityOut(party=None, probability_pct=prob_oth, projected_seats=int(prob_oth/100*total_seats), seat_change=0)
     ]
 
