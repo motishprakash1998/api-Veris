@@ -528,7 +528,7 @@ def pc_section1(state: str = Query("Rajasthan"), db: Session = Depends(get_db)):
     ]
 
     next_expected_wins = [
-        lokh_sabha_schemas.NextExpectedWin(party=p.party if p.party else PartyOut(id=0, short_name="OTHERS", full_name="Others"),
+        lokh_sabha_schemas.NextExpectedWin(party=p.party if p.party else lokh_sabha_schemas.PartyOut(id=0, short_name="OTHERS", full_name="Others"),
                         wins_probability_pct=p.probability_pct,
                         projected_seats=p.projected_seats,
                         seat_change=p.seat_change)
