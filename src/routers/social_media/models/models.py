@@ -4,6 +4,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
+from sqlalchemy.orm import Mapped, mapped_column
+
 
 Base = declarative_base()
 
@@ -61,6 +63,7 @@ class AccountProfile(Base):
     is_private = Column(Boolean)
     extra = Column(JSON)
     source = Column(Text)  # 'api', 'scrape', 'upload'
+    like_count: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     retrieved_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (

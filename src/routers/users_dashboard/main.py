@@ -2,7 +2,7 @@ from typing import List, Optional, Dict, Tuple
 from collections import defaultdict
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, func,distinct
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from decimal import Decimal
 
 from src.routers.users_dashboard.models.users import (
@@ -19,9 +19,11 @@ from .schemas.users import (
 from src.database.db import get_db
 
 from src.routers.users_dashboard.models.lokh_sabha import LokhSabhaResult
-
 from src.routers.users_dashboard.schemas import lokh_sabha as lokh_sabha_schemas
-
+from src.routers.users_dashboard.schemas.social_info import SocialInfoResponse, SocialAccountSchema, AccountProfileSchema
+from src.routers.social_media.models import models
+from loguru import logger
+from src.routers.users_dashboard import controllers
 
 router = APIRouter(prefix="/api/users_dashboard", 
                    tags=["Users Dashboard"], 
@@ -474,3 +476,432 @@ def pc_section1(state: str = Query("Rajasthan"), db: Session = Depends(get_db)):
         winning_probabilities=probs,
         next_expected_wins=next_expected_wins
     )
+
+
+@router.get("/social-info")
+def get_social_info_merged(db: Session = Depends(get_db)):
+    try:
+        query = (
+            select(models.SocialAccount)
+            .options(
+                selectinload(models.SocialAccount.platform),
+                selectinload(models.SocialAccount.profiles)
+            )
+        )
+
+        result = db.execute(query)
+        accounts = result.scalars().all()
+
+        merged_accounts = {}
+
+        for acc in accounts:
+            # username key without spaces, lowercased
+            username_key = (acc.username or "").replace(" ", "").lower()
+
+            if username_key not in merged_accounts:
+                merged_accounts[username_key] = {
+                    "username": acc.username,
+                    "display_name": acc.profiles[0].display_name if acc.profiles else None,
+                    "platforms": {
+                        "instagram": None,
+                        "facebook": None
+                    }
+                }
+
+            # Determine platform name
+            platform_name = (acc.platform.display_name.lower() if acc.platform else None)
+            if platform_name not in ["instagram", "facebook"]:
+                platform_name = None
+
+            # Fill platform data
+            if platform_name and acc.profiles:
+                profile = acc.profiles[0]
+                merged_accounts[username_key]["platforms"][platform_name] = {
+                    "profile_url": acc.profile_url,
+                    "bio": profile.bio,
+                    "website": profile.website,
+                    "location": profile.location,
+                    "followers": profile.follower_count or 0,
+                    "following": profile.following_count or 0,
+                    "posts": profile.post_count or 0,
+                    "likes": profile.like_count or 0,
+                    "profile_image_url": profile.profile_image_url,
+                    "retrieved_at": profile.retrieved_at.isoformat() if profile.retrieved_at else None,
+                    "source": profile.source,
+                }
+
+        return {"social_accounts": list(merged_accounts.values())}
+
+    except Exception as e:
+        logger.error(f"Error fetching social info: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+    
+    
+# from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+from typing import Any, Dict, List, Optional
+from datetime import datetime
+
+# router = APIRouter()
+
+# dependency from your app:
+# from your_project.db import get_db
+# from your_project.logging import logger
+
+DEFAULT_LEADERS = [
+    "Lal Chand Kataria",
+    "Vasundhara Raje",
+    "Ashok Gehlot",
+    "Bhajanlal sharma",
+    "Sachin Pilot",
+    "Diya Kumari",
+    "Prem Chand Bairwa",
+    "Satish Punia",
+    "Govind Singh Dotasra",
+    "Madan Rathore"
+]
+
+def _safe_int(v):
+    try:
+        return int(v) if v is not None else None
+    except:
+        return None
+    
+@router.get("/ranking")
+def social_leaders_ranking(db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """
+    Return ranking info for top leaders with their basic info, parliament, and assembly data.
+    """
+
+    leaders = [
+        "Lal Chand Kataria",
+        "Vasundhara Raje",
+        "Ashok Gehlot",
+        "Bhajanlal Sharma",
+        "Sachin Pilot",
+        "Diya Kumari",
+        "Prem Chand Bairwa",
+        "Satish Poonia",
+        "Govind Singh Dotasra",
+        "Madan Rathore"
+    ]
+
+    results = []
+
+    try:
+        for name in leaders:
+            try:
+                basic_info = controllers.get_basic_info_leader(db, candidate_name=name)
+                parliament = controllers.get_parliament_dashboard_data(db, candidate_name=name)
+                assembly = controllers.get_assembly_dashboard_data(db, candidate_name=name)
+                social_media = controllers.social_media_info(db, display_name=name)
+
+                results.append({
+                    "name": name,
+                    "basic_info": basic_info,
+                    "parliament": parliament,
+                    "assembly": assembly,
+                    "social_media": social_media
+                })
+
+            except Exception as inner_e:
+                # Log and continue with others instead of breaking all
+                logger.warning(f"Error fetching data for {name}: {inner_e}")
+                results.append({
+                    "name": name,
+                    "basic_info": [],
+                    "parliament": [],
+                    "assembly": [],
+                    "error": str(inner_e)
+                })
+
+        response = {"leaders": results}
+        logger.info("Leaders ranking response prepared successfully.")
+        return response
+
+    except Exception as e:
+        logger.error(f"Error fetching leaders ranking: {e}", exc_info=True)
+        try:
+            db.rollback()
+        except Exception as rb:
+            logger.exception(f"Rollback failed while handling error in social_leaders_ranking: {rb}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# @router.get("/leaders/batch")
+# def get_leaders_batch(db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """
+    Return full payloads for DEFAULT_LEADERS (10 names).
+    Matches by candidate_affidavits.candidate_name OR account_profiles.display_name OR social_accounts.username.
+    """
+    try:
+        names = DEFAULT_LEADERS
+
+        # build dynamic IN placeholders: (:n0, :n1, ...)
+        placeholders = ", ".join([f":n{i}" for i in range(len(names))])
+        params = {f"n{i}": names[i] for i in range(len(names))}
+
+        # 1) fetch affidavits for these names (exact match)
+        affidavit_q = text(f"""
+            SELECT candidate_name, affidavit_id, party_name, "year", criminal_cases, total_assets, education
+            FROM public.candidate_affidavits
+            WHERE candidate_name IN ({placeholders})
+            ORDER BY "year" DESC NULLS LAST
+        """)
+        aff_rows = [dict(r) for r in db.execute(affidavit_q, params).mappings().all()]
+
+        # map by candidate_name
+        aff_by_name = {r["candidate_name"]: r for r in aff_rows}
+
+        # 2) parliament and assembly histories (exact match)
+        parl_q = text(f"""
+            SELECT pc_name as constituency, candidate, party, votes, vote_percent, margin_votes, margin_percent, total_votes_polled_num as total_votes, "year"
+            FROM public.parliament_candidate_information
+            WHERE candidate IN ({placeholders})
+            ORDER BY candidate, "year" DESC NULLS LAST
+        """)
+        parl_rows = [dict(r) for r in db.execute(parl_q, params).mappings().all()]
+
+        ac_q = text(f"""
+            SELECT ac_name as constituency, candidate, party, votes, vote_percent, margin_votes, margin_percent, total_votes_polled_num as total_votes, "year", "position"
+            FROM public.assembly_candidate_information
+            WHERE candidate IN ({placeholders})
+            ORDER BY candidate, "year" DESC NULLS LAST
+        """)
+        ac_rows = [dict(r) for r in db.execute(ac_q, params).mappings().all()]
+
+        parl_by_candidate = defaultdict(list)
+        for r in parl_rows:
+            parl_by_candidate[r["candidate"]].append(r)
+
+        ac_by_candidate = defaultdict(list)
+        for r in ac_rows:
+            ac_by_candidate[r["candidate"]].append(r)
+
+        # 3) social accounts and profiles where display_name OR username matches any name
+        # We'll match COALESCE(ap.display_name, sa.username) IN (names)
+        social_q = text(f"""
+            SELECT sa.id as social_account_id, sa.platform_id, sa.platform_user_id, sa.username, sa.profile_url,
+                   ap.display_name, ap.bio, ap.website, ap.profile_image_url, ap.follower_count, ap.following_count,
+                   ap.post_count, ap.like_count, ap.retrieved_at, ap.source,
+                   COALESCE(NULLIF(ap.display_name,''), sa.username) as match_key
+            FROM public.social_accounts sa
+            LEFT JOIN public.account_profiles ap ON ap.social_account_id = sa.id
+            WHERE COALESCE(NULLIF(ap.display_name,''), sa.username) IN ({placeholders})
+        """)
+        social_rows = [dict(r) for r in db.execute(social_q, params).mappings().all()]
+
+        social_by_match = defaultdict(list)
+        social_ids = []
+        for r in social_rows:
+            key = r["match_key"]
+            social_by_match[key].append(r)
+            if r.get("social_account_id"):
+                social_ids.append(r["social_account_id"])
+
+        # 4) instagram_posts aggregation per social_account_id (list-of-all + grouped)
+        insta_list_q = text(f"""
+            SELECT id, social_account_id, shortcode, likes, "comment", display_url, timestamp
+            FROM public.instagram_posts
+            WHERE social_account_id IN ({', '.join([str(sid) for sid in social_ids])}) 
+            ORDER BY social_account_id, timestamp DESC
+        """) if social_ids else None
+
+        insta_rows = []
+        if social_ids:
+            # use mappings
+            insta_rows = [dict(r) for r in db.execute(insta_list_q).mappings().all()]
+
+        # build insta aggregation per account and keep the list of all posts per account
+        insta_posts_by_account = defaultdict(list)
+        insta_agg_by_account = {}
+        for r in insta_rows:
+            sid = r["social_account_id"]
+            insta_posts_by_account[sid].append({
+                "id": r.get("id"),
+                "shortcode": r.get("shortcode"),
+                "likes": int(r.get("likes") or 0),
+                "comments": int(r.get("comment") or 0),
+                "display_url": r.get("display_url"),
+                "timestamp": r.get("timestamp")
+            })
+
+        for sid, posts in insta_posts_by_account.items():
+            total_likes = sum(p["likes"] for p in posts)
+            total_comments = sum(p["comments"] for p in posts)
+            post_count = len(posts)
+            insta_agg_by_account[sid] = {
+                "total_likes": total_likes,
+                "total_comments": total_comments,
+                "post_count": post_count,
+                "avg_likes_per_post": (total_likes / post_count) if post_count > 0 else 0,
+                "avg_comments_per_post": (total_comments / post_count) if post_count > 0 else 0,
+                "posts": posts  # list of all posts for this account
+            }
+
+        # 5) Build final payloads for each name in default order
+        results = []
+        for name in names:
+            aff = aff_by_name.get(name)
+            p_hist = []
+            for r in parl_by_candidate.get(name, []):
+                p_hist.append({
+                    "year": _safe_int(r.get("year")),
+                    "election_type": "Parliament",
+                    "constituency": r.get("constituency"),
+                    "party": r.get("party"),
+                    "votes_obtained": _safe_int(r.get("votes")),
+                    "vote_share_pct": float(r.get("vote_percent")) if r.get("vote_percent") is not None else None,
+                    "position": None,
+                    "margin": _safe_int(r.get("margin_votes")),
+                    "total_votes": _safe_int(r.get("total_votes")),
+                    "result": None,
+                    "source": None
+                })
+
+            a_hist = []
+            for r in ac_by_candidate.get(name, []):
+                a_hist.append({
+                    "year": _safe_int(r.get("year")),
+                    "election_type": "Assembly",
+                    "constituency": r.get("constituency"),
+                    "party": r.get("party"),
+                    "votes_obtained": _safe_int(r.get("votes")),
+                    "vote_share_pct": float(r.get("vote_percent")) if r.get("vote_percent") is not None else None,
+                    "position": _safe_int(r.get("position")),
+                    "margin": _safe_int(r.get("margin_votes")),
+                    "total_votes": _safe_int(r.get("total_votes")),
+                    "result": None,
+                    "source": None
+                })
+
+            # social profiles for this name
+            social_profiles = social_by_match.get(name, [])
+            platforms_list = []
+            combined_followers = combined_following = combined_posts_field = combined_like_field = 0
+            total_inst_likes = total_inst_comments = total_inst_posts = 0
+
+            for sp in social_profiles:
+                sid = sp.get("social_account_id")
+                acct_agg = insta_agg_by_account.get(sid, {"total_likes":0,"total_comments":0,"post_count":0,"avg_likes_per_post":0,"avg_comments_per_post":0,"posts":[]})
+                followers = sp.get("follower_count") or 0
+                following = sp.get("following_count") or 0
+                posts_field = sp.get("post_count") or 0
+                like_field = sp.get("like_count") or 0
+
+                combined_followers += int(followers)
+                combined_following += int(following)
+                combined_posts_field += int(posts_field)
+                combined_like_field += int(like_field)
+
+                total_inst_likes += acct_agg.get("total_likes", 0)
+                total_inst_comments += acct_agg.get("total_comments", 0)
+                total_inst_posts += acct_agg.get("post_count", 0)
+
+                platforms_list.append({
+                    "social_account_id": sid,
+                    "platform_id": sp.get("platform_id"),
+                    "username": sp.get("username"),
+                    "display_name": sp.get("display_name"),
+                    "profile_url": sp.get("profile_url"),
+                    "bio": sp.get("bio"),
+                    "website": sp.get("website"),
+                    "profile_image_url": sp.get("profile_image_url"),
+                    "followers": int(followers) if followers else None,
+                    "following": int(following) if following else None,
+                    "posts": int(posts_field) if posts_field else None,
+                    "like_field": int(like_field) if like_field else None,
+                    "retrieved_at": sp.get("retrieved_at").isoformat() if sp.get("retrieved_at") else None,
+                    "source": sp.get("source"),
+                    "instagram_agg": acct_agg
+                })
+
+            instagram_agg = {
+                "total_likes": total_inst_likes,
+                "total_comments": total_inst_comments,
+                "post_count": total_inst_posts,
+                "avg_likes_per_post": (total_inst_likes / total_inst_posts) if total_inst_posts > 0 else 0,
+                "avg_comments_per_post": (total_inst_comments / total_inst_posts) if total_inst_posts > 0 else 0,
+            }
+
+            payload = {
+                "id": (aff.get("candidate_name").lower().replace(" ", "_") if aff else name.lower().replace(" ", "_")),
+                "name": aff.get("candidate_name") if aff else name,
+                "aliases": [],
+                "dob": None,
+                "gender": None,
+                "photo_url": None,
+                "party": {
+                    "id": None,
+                    "short_name": aff.get("party_name") if aff else None,
+                    "full_name": aff.get("party_name") if aff else None
+                },
+                "current_positions": [],
+                "profile": {
+                    "summary": None,
+                    "education": [aff.get("education")] if aff and aff.get("education") else [],
+                    "profession": None,
+                    "contact": {"email": None, "phone": None, "office_address": None}
+                },
+                "parliament": {
+                    "constituency": (parl_by_candidate.get(name, [{}])[0].get("constituency") if parl_by_candidate.get(name) else None),
+                    "election_history": p_hist,
+                    "committee_memberships": [],
+                    "parliamentary_performance": {"questions_asked": None, "bills_introduced": None, "attendance_pct": None, "debates_participated": None}
+                },
+                "assembly": {
+                    "constituency": (ac_by_candidate.get(name, [{}])[0].get("constituency") if ac_by_candidate.get(name) else None),
+                    "election_history": a_hist,
+                    "assembly_performance": {"questions_asked": None, "motions_supported": None, "attendance_pct": None}
+                },
+                "social_media": {
+                    "platforms": platforms_list,
+                    "combined_followers": combined_followers if combined_followers > 0 else None,
+                    "combined_following": combined_following if combined_following > 0 else None,
+                    "combined_posts": combined_posts_field if combined_posts_field > 0 else None,
+                    "combined_like_field": combined_like_field if combined_like_field > 0 else None,
+                    "instagram_agg": instagram_agg
+                },
+                "assets_and_liabilities": {
+                    "declared_assets": [],
+                    "declared_liabilities": [],
+                    "total_net_worth": _safe_int(aff.get("total_assets")) if aff else None,
+                    "currency": "INR",
+                    "affidavit_source_url": None,
+                    "last_declared_year": _safe_int(aff.get("year")) if aff and aff.get("year") else None
+                },
+                "criminal_cases": [],
+                "other_metrics": {
+                    "public_approval_rating_pct": None,
+                    "policy_achievements": [],
+                    "media_coverage_score": None,
+                    "influence_score": None,
+                    "demographic_appeal": {"urban_pct": None, "rural_pct": None, "youth_pct": None, "women_pct": None, "other_segments": {}}
+                },
+                "custom_inputs": {"notes": None, "tags": []},
+                "comparison_ui": {
+                    "display_name": aff.get("candidate_name") if aff else name,
+                    "display_order": ["rank_overall", "party", "election_history", "social_media", "assets_and_liabilities", "criminal_cases", "other_metrics"],
+                    "spec_sheet_keys": ["party", "latest_position", "combined_followers", "total_net_worth", "public_approval_rating_pct", "criminal_cases_count"],
+                    "highlight_metrics": ["influence_score", "media_coverage_score", "public_approval_rating_pct"]
+                },
+                "ranking": {"rank_overall": None, "rank_by_metric": {"influence_score": None, "electability": None, "social_presence": None, "funds": None}},
+                "sources": [],
+                "last_updated": datetime.utcnow().isoformat() + "Z",
+                "data_quality": {"completeness_pct": None, "last_verified": None, "verified_by": None},
+                # helper/debug fields
+                "_affidavit": aff,
+                "_parliament_rows": parl_by_candidate.get(name, []),
+                "_assembly_rows": ac_by_candidate.get(name, []),
+                "_social_rows": social_by_match.get(name, []),
+                "_instagram_posts_by_account": {sid: insta_agg_by_account[sid]["posts"] for sid in insta_agg_by_account if sid in insta_posts_by_account} if insta_posts_by_account else {}
+            }
+
+            results.append(payload)
+
+        return {"count": len(results), "leaders": results}
+
+    except Exception as e:
+        logger.exception("Error in get_leaders_batch")
+        raise HTTPException(status_code=500, detail=str(e))
