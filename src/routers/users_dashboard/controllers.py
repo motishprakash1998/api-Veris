@@ -547,7 +547,20 @@ def get_basic_info_leader(
                 "from": f"{latest_record.get('year')}",
                 "to": None
             }]
-
+        # Build public URL using Source bucket name  env var (fallback to requestable domain if not present)
+        import os
+        import urllib.parse
+        import logging
+        from src.routers.employees import controller
+        profile_path = r.get("profile_image_url", "").lstrip("/")
+        source_bucket_name = os.environ.get("SOURCE_BUCKET_NAME")
+        if not source_bucket_name:
+            logging.warning("DOMAIN env var not set; returning path without domain")
+            public_url = profile_path
+        else:
+            # ensure path is URL-encoded
+            encoded_path = urllib.parse.quote(profile_path)
+            public_url = controller.generate_presigned_url(source_bucket_name, profile_path)
         # --- Step 3: Combine full response ---
         results.append({
             "id": r.get("social_account_id"),
@@ -556,7 +569,7 @@ def get_basic_info_leader(
             "bio": r.get("bio") or None,
             "dob": "NA",
             "gender": _infer_gender(display_name),
-            "photo_url": r.get("profile_image_url") or None,
+            "photo_url": public_url or None,
             "party": party_info,
             "current_positions": current_positions,
             "profile": {
