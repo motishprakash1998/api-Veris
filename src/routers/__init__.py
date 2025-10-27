@@ -10,6 +10,7 @@ from .election_services.verification.main import router as verification_routes
 from .social_media.Instagram.main import  router as ig_router
 from .users_dashboard.main import router as user_dashboard_route
 from .social_media.facebook.main import router as fb_router
+from .assembly.main import router as assembly_routers
 __all__ = [
     "users_router",
     "feedback_router",
@@ -22,5 +23,5 @@ __all__ = [
     "ig_router",
     "user_dashboard_route",
     "fb_router",
-    
+    "assembly_routers"
            ]
