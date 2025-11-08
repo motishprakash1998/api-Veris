@@ -154,33 +154,47 @@ def _apply_filters_to_query(query, filters: Optional[CommonFilters]):
 # -------------------------
 def total_counts(session: Session, filters: Optional[CommonFilters] = None) -> Dict[str, int]:
     """Return general totals for dashboard tiles. Filters restrict the counts where applicable."""
-    # For overall totals we interpret filters conservatively: when state/pc/year provided
-    # we count scoped objects, otherwise full counts.
     if filters and (filters.state_name or filters.pc_name or filters.year or filters.party_name or filters.candidate_name):
-        # Count states matching filter (only state_name filter makes sense)
+        # States
         total_states = 0
         if filters.state_name:
-            total_states = session.query(func.count(State.state_id)).filter(func.lower(State.state_name) == filters.state_name.strip().lower()).scalar() or 0
-        total_constituencies = session.query(func.count(Constituency.pc_id)).join(State).filter(func.lower(State.state_name) == filters.state_name.strip().lower()) if filters.state_name else session.query(func.count(Constituency.pc_id))
+            total_states = (
+                session.query(func.count(State.state_id))
+                .filter(func.lower(State.state_name) == filters.state_name.strip().lower())
+                .scalar()
+                or 0
+            )
+
+        total_constituencies = (
+            session.query(func.count(Constituency.pc_id))
+            .join(State)
+            .filter(func.lower(State.state_name) == filters.state_name.strip().lower())
+            if filters.state_name
+            else session.query(func.count(Constituency.pc_id))
+        )
         total_constituencies = total_constituencies.scalar() or 0
 
-        # parties / candidates: apply name filters
+        # Parties
         total_parties = session.query(func.count(Party.party_id))
         if filters and filters.party_name:
-            total_parties = total_parties.filter(func.lower(Party.party_name) == filters.party_name.strip().lower())
+            total_parties = total_parties.filter(
+                func.lower(Party.party_name) == filters.party_name.strip().lower()
+            )
         total_parties = total_parties.scalar() or 0
-        
-        total_candidates = session.query(
-            func.count(func.distinct(Candidate.candidate_name))
-        )
 
+        # ✅ Candidates — unique names only for Rajasthan
+        total_candidates = (
+            session.query(func.count(func.distinct(Candidate.candidate_name)))
+            .join(State, Candidate.state_id == State.state_id)
+            .filter(func.lower(State.state_name) == "rajasthan")
+        )
         if filters and filters.candidate_name:
             total_candidates = total_candidates.filter(
                 func.lower(Candidate.candidate_name).like(f"%{filters.candidate_name.strip().lower()}%")
             )
-
         total_candidates = total_candidates.scalar() or 0
 
+        # Elections
         total_elections = session.query(func.count(Election.election_id))
         if filters and filters.year:
             total_elections = total_elections.filter(Election.year == filters.year)
@@ -194,18 +208,26 @@ def total_counts(session: Session, filters: Optional[CommonFilters] = None) -> D
             "elections": int(total_elections),
         }
 
-    # No filters: simple totals
+    # ✅ No filters: candidates unique count only for Rajasthan
     total_states = session.query(func.count(State.state_id)).scalar() or 0
     total_constituencies = session.query(func.count(Constituency.pc_id)).scalar() or 0
     total_parties = session.query(func.count(Party.party_id)).scalar() or 0
-    total_candidates = session.query(func.count(Candidate.candidate_id)).scalar() or 0
+
+    total_candidates = (
+        session.query(func.count(func.distinct(Candidate.candidate_name)))
+        .join(State, Candidate.state_id == State.state_id)
+        .filter(func.lower(State.state_name) == "rajasthan")
+        .scalar()
+        or 0
+    )
+
     total_elections = session.query(func.count(Election.election_id)).scalar() or 0
 
     return {
         "states": total_states,
         "constituencies": total_constituencies,
         "parties": total_parties,
-        "candidates": total_candidates,
+        "candidates": total_candidates,  # only Rajasthan unique count
         "elections": total_elections,
     }
 
