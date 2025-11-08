@@ -169,10 +169,16 @@ def total_counts(session: Session, filters: Optional[CommonFilters] = None) -> D
         if filters and filters.party_name:
             total_parties = total_parties.filter(func.lower(Party.party_name) == filters.party_name.strip().lower())
         total_parties = total_parties.scalar() or 0
+        
+        total_candidates = session.query(
+            func.count(func.distinct(Candidate.candidate_name))
+        )
 
-        total_candidates = session.query(func.count(Candidate.candidate_id))
         if filters and filters.candidate_name:
-            total_candidates = total_candidates.filter(func.lower(Candidate.candidate_name).like(f"%{filters.candidate_name.strip().lower()}%"))
+            total_candidates = total_candidates.filter(
+                func.lower(Candidate.candidate_name).like(f"%{filters.candidate_name.strip().lower()}%")
+            )
+
         total_candidates = total_candidates.scalar() or 0
 
         total_elections = session.query(func.count(Election.election_id))
