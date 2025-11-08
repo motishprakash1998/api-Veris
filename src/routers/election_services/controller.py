@@ -769,64 +769,7 @@ def create_candidate_entry(db: Session, payload) -> Dict[str, Any]:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create candidate entry: {str(exc)}"
         )
-        
-# def get_candidate_history(db, affidavit):
-#     """
-#     Optimized: Find how many times the candidate has stood in elections
-#     for the same PC (pc_name), considering age difference <= 5 years.
-#     """
-
-#     # Pre-trim + lowercase target name
-#     target_name = affidavit.candidate_name.strip().lower()
-#     target_age = float(affidavit.age or 0)
-
-#     # Fetch only needed fields (avoid loading big rows)
-#     all_affidavits = (
-#     db.query(
-#         models.Affidavit.candidate_name,
-#         models.Affidavit.age,
-#         models.Affidavit.year
-#     )
-#     .filter(models.Affidavit.pc_name.ilike(affidavit.pc_name.strip()))
-#     .filter(func.similarity(models.Affidavit.candidate_name, affidavit.candidate_name) > 0.4)  
-#     .all()
-# )
-
-#     # Use set for unique storage
-#     candidate_years = set()
-#     candidate_aliases = set()
-
-#     # Batch fuzzy match using process.extract instead of per-loop fuzz
-#     # (much faster than calling fuzz.token_sort_ratio individually)
-#     names = [a.candidate_name.strip().lower() for a in all_affidavits]
-#     matches = process.extract(
-#         target_name,
-#         names,
-#         scorer=fuzz.token_sort_ratio,
-#         score_cutoff=80  # skip bad matches quickly
-#     )
-
-#     # Map matched names back to original rows
-#     matched_names = set([m[0] for m in matches])
-
-#     for aff in all_affidavits:
-#         cand_name = aff.candidate_name.strip().lower()
-#         if cand_name in matched_names:
-#             try:
-#                 age_diff = abs(target_age - float(aff.age or 0))
-#             except Exception:
-#                 age_diff = 0
-#             if age_diff <= 5:
-#                 candidate_aliases.add(aff.candidate_name.strip())
-#                 if aff.year:
-#                     candidate_years.add(int(aff.year))
-
-#     return {
-#         "times_stood": len(candidate_years),
-#         "years": sorted(candidate_years),
-#         "aliases": sorted(candidate_aliases),
-#     }
-
+     
 def get_candidate_history(db: Session, affidavit):
     target_name = affidavit.candidate_name.strip().lower()
     target_age = float(affidavit.age or 0)

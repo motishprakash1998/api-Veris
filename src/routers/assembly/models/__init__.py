@@ -1,4 +1,5 @@
 from .assembly_models import Base, ElectionMaster, ConstituencyMaster, ConstituencyResults, ConstituencyCandidates
+from .assembly_myneta_models import AssemblyAffidavit
 
 __all__ = [
     "Base",
@@ -6,4 +7,5 @@ __all__ = [
     "ConstituencyMaster",
     "ConstituencyResults",
     "ConstituencyCandidates",
+    "AssemblyAffidavit",
 ]

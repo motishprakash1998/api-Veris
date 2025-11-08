@@ -3,8 +3,8 @@ from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
 
-class Affidavit(Base):
-    __tablename__ = "candidate_affidavits"  
+class AssemblyAffidavit(Base):
+    __tablename__ = "candidate_affidavits_ac"  
 
     affidavit_id = Column(Integer, primary_key=True, autoincrement=True)
 
@@ -18,8 +18,9 @@ class Affidavit(Base):
     liabilities = Column(BigInteger, nullable=True)
     candidate_link = Column(Text, nullable=True)  # 👈 use Text for long URLs
     year = Column(Integer, nullable=False)
-    pc_name = Column(String(255), nullable=True)
+    ac_name = Column(String(255), nullable=True)
     state_name = Column(String(255), nullable=True)
+    assembly_type = Column(String(50), nullable=True)
     
     # Candidate history column
     candidate_history = Column(JSON, nullable=True) 
@@ -42,5 +43,5 @@ class Affidavit(Base):
     
     # Optional: prevent duplicate entries for the same candidate, year, and PC
     __table_args__ = (
-        UniqueConstraint("candidate_name", "year", "pc_name", name="uix_candidate_year_pc"),
+        UniqueConstraint("candidate_name", "year", "ac_name", name="uix_candidate_year_pc"),
     )
