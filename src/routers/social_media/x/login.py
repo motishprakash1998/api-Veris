@@ -6,16 +6,15 @@ from urllib.parse import quote
 
 import requests
 from fastapi import APIRouter, Request
-from fastapi.responses import RedirectResponse, HTMLResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 
 router = APIRouter(prefix="/api/twitter", tags=["Twitter Login"])
 
-# In-memory PKCE & state storage (store in DB/Redis in production)
+# TEMP MEMORY (use DB/Redis in production)
 TEMP_STORE = {}
 
 
 def generate_pkce():
-    """Generate PKCE verifier + challenge."""
     verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
     challenge = base64.urlsafe_b64encode(
         hashlib.sha256(verifier.encode()).digest()
@@ -23,9 +22,9 @@ def generate_pkce():
     return verifier, challenge
 
 
-# ----------------------------------------
+# -------------------------------------------------------
 # 🔹 STEP 1 — LOGIN START
-# ----------------------------------------
+# -------------------------------------------------------
 @router.get("/login")
 def twitter_login():
     client_id = os.getenv("TWITTER_CLIENT_ID", "c3hTZmhyY1hCUTNUVXduMm0yVEo6MTpjaQ")
@@ -55,9 +54,9 @@ def twitter_login():
     return RedirectResponse(url=auth_url)
 
 
-# ----------------------------------------
-# 🔹 STEP 2 — CALLBACK + TOKEN EXCHANGE
-# ----------------------------------------
+# -------------------------------------------------------
+# 🔹 STEP 2 — CALLBACK + TOKEN + USER INFO
+# -------------------------------------------------------
 @router.get("/callback")
 def twitter_callback(request: Request):
 
@@ -65,20 +64,18 @@ def twitter_callback(request: Request):
     state = request.query_params.get("state")
 
     if not code:
-        return HTMLResponse("<h3>Error: Missing 'code' from Twitter</h3>")
+        return JSONResponse({"error": "Missing authorization code"}, status_code=400)
 
     if state != TEMP_STORE.get("state"):
-        return HTMLResponse("<h3>Error: Invalid OAuth state</h3>")
+        return JSONResponse({"error": "Invalid OAuth state"}, status_code=400)
 
-    # PKCE verifier
     verifier = TEMP_STORE.get("verifier")
     redirect_uri = TEMP_STORE.get("redirect_uri")
-
     client_id = os.getenv("TWITTER_CLIENT_ID", "c3hTZmhyY1hCUTNUVXduMm0yVEo6MTpjaQ")
 
-    # -------------------------------
-    # 🔄 STEP 3 — Exchange Code for Token
-    # -------------------------------
+    # ----------------------------------------
+    # 🔄 EXCHANGE CODE → TOKEN
+    # ----------------------------------------
     token_url = "https://api.twitter.com/2/oauth2/token"
 
     payload = {
@@ -91,22 +88,42 @@ def twitter_callback(request: Request):
 
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
-    response = requests.post(token_url, data=payload, headers=headers)
+    token_res = requests.post(token_url, data=payload, headers=headers)
 
-    if response.status_code != 200:
-        return HTMLResponse(
-            f"<h3>Token Exchange Failed</h3><pre>{response.text}</pre>"
+    if token_res.status_code != 200:
+        return JSONResponse(
+            {"error": "Token request failed", "details": token_res.text},
+            status_code=400,
         )
 
-    token_data = response.json()
+    token_data = token_res.json()
+    access_token = token_data["access_token"]
 
-    # -------------------------------
-    # 🎉 SUCCESS
-    # -------------------------------
-    return HTMLResponse(
-        f"""
-        <h2>Twitter OAuth Success</h2>
-        <h3>Access Token Received!</h3>
-        <pre>{token_data}</pre>
-        """
+    # ----------------------------------------
+    # 🔍 FETCH USER INFO
+    # ----------------------------------------
+    user_info_url = "https://api.twitter.com/2/users/me"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    params = {"user.fields": "id,name,username,profile_image_url"}
+
+    user_res = requests.get(user_info_url, headers=headers, params=params)
+
+    if user_res.status_code != 200:
+        return JSONResponse(
+            {"error": "Failed to fetch user info", "details": user_res.text},
+            status_code=400,
+        )
+
+    user_data = user_res.json()
+
+    # ------------------------------------------------
+    # 🎉 RETURN CLEAN JSON (for frontend)
+    # ------------------------------------------------
+    return JSONResponse(
+        {
+            "success": True,
+            "user": user_data.get("data", {}),
+            "access_token": access_token,
+            "refresh_token": token_data.get("refresh_token"),
+        }
     )
