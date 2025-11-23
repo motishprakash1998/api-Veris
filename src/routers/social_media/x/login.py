@@ -12,7 +12,7 @@ router = APIRouter(
     tags=["Twitter Login"],
 )
 
-# Temporary PKCE + state store
+# Temporary store (use Redis or DB in production)
 TEMP_STORE = {}
 
 
@@ -30,14 +30,17 @@ def login():
     """Start Twitter OAuth login."""
     client_id = os.getenv("X_CLIENT_ID", "c3hTZmhyY1hCUTNUVXduMm0yVEo6MTpjaQ")
 
-    # YOUR FIXED AND CORRECT REDIRECT
+    # Your correct backend callback URL
     redirect_uri = "https://backend-veris.skyserver.net.in/api/twitter/callback"
 
     verifier, challenge = generate_pkce()
     state = secrets.token_urlsafe(16)
 
-    TEMP_STORE["verifier"] = verifier
-    TEMP_STORE["state"] = state
+    # store using state as key (CORRECT way)
+    TEMP_STORE[state] = {
+        "verifier": verifier,
+        "redirect_uri": redirect_uri,
+    }
 
     scopes = "tweet.read users.read offline.access"
 
@@ -64,8 +67,16 @@ def callback(request: Request):
     if not code:
         return HTMLResponse("<h3>Error: Missing 'code' from Twitter</h3>")
 
-    if state != TEMP_STORE.get("state"):
-        return HTMLResponse("<h3>Error: Invalid OAuth state</h3>")
+    if state not in TEMP_STORE:
+        return HTMLResponse("<h3>Error: Invalid or expired OAuth state</h3>")
 
-    # Everything is correct — ready for token exchange
-    return HTMLResponse(f"<h2>OAuth Success</h2><pre>code: {code}</pre>")
+    verifier = TEMP_STORE[state]["verifier"]
+
+    # OPTIONAL: cleanup after one use
+    del TEMP_STORE[state]
+
+    return HTMLResponse(
+        f"<h2>OAuth Success</h2>"
+        f"<p>Now exchange this code with Twitter:</p>"
+        f"<pre>code: {code}\nverifier: {verifier}</pre>"
+    )
