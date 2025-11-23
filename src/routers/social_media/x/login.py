@@ -28,7 +28,7 @@ def generate_pkce():
 # ----------------------------------------
 @router.get("/login")
 def twitter_login():
-    client_id = os.getenv("X_CLIENT_ID", "c3hTZmhyY1hCUTNUVXduMm0yVEo6MTpjaQ")
+    client_id = os.getenv("TWITTER_CLIENT_ID", "c3hTZmhyY1hCUTNUVXduMm0yVEo6MTpjaQ")
 
     redirect_uri = "https://backend-veris.skyserver.net.in/api/twitter/callback"
 
