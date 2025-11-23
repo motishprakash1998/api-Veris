@@ -74,7 +74,7 @@ def twitter_callback(request: Request):
     verifier = TEMP_STORE.get("verifier")
     redirect_uri = TEMP_STORE.get("redirect_uri")
 
-    client_id = os.getenv("X_CLIENT_ID", "c3hTZmhyY1hCUTNUVXduMm0yVEo6MTpjaQ")
+    client_id = os.getenv("TWITTER_CLIENT_ID", "c3hTZmhyY1hCUTNUVXduMm0yVEo6MTpjaQ")
 
     # -------------------------------
     # 🔄 STEP 3 — Exchange Code for Token
