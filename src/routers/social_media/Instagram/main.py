@@ -43,8 +43,8 @@ def validate(
 
 
 # Instagram App Config
-CLIENT_ID = "2020018448748214"
-CLIENT_SECRET = "a4cf677f7bd5f34af3597c23490b294a"
+CLIENT_ID = "2007595690062087"
+CLIENT_SECRET = "61175cf6e37f68bf12d1ea59749e9fe9"
 REDIRECT_URI = "https://backend-veris.skyserver.net.in/api/instagram/callback"
 
 
