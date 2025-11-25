@@ -56,22 +56,24 @@ def instagram_login():
 
     scope = (
         "instagram_business_basic,"
-        "instagram_business_manage_messages,"
         "instagram_business_manage_comments,"
+        "instagram_business_manage_messages,"
         "instagram_business_content_publish,"
-        "instagram_business_manage_insights"
+        "pages_show_list,"
+        "pages_manage_metadata,"
+        "pages_read_engagement"
     )
 
     auth_url = (
-        "https://www.instagram.com/oauth/authorize"
+        "https://www.facebook.com/v21.0/dialog/oauth"
         f"?client_id={CLIENT_ID}"
         f"&redirect_uri={REDIRECT_URI}"
         f"&scope={scope}"
         f"&response_type=code"
-        f"&force_reauth=true"
     )
 
     return RedirectResponse(url=auth_url)
+
 
 
 # -------------------------------------------------------
@@ -83,31 +85,22 @@ def instagram_callback(request: Request):
     code = request.query_params.get("code")
 
     if not code:
-        return JSONResponse({"error": "No 'code' provided"}, status_code=400)
+        return {"error": "Missing code"}
 
-    token_url = "https://api.instagram.com/oauth/access_token"
+    token_url = "https://graph.facebook.com/v21.0/oauth/access_token"
 
     payload = {
         "client_id": CLIENT_ID,
         "client_secret": CLIENT_SECRET,
-        "grant_type": "authorization_code",
         "redirect_uri": REDIRECT_URI,
         "code": code
     }
 
-    res = requests.post(token_url, data=payload)
+    res = requests.get(token_url, params=payload)
 
-    if res.status_code != 200:
-        return JSONResponse(
-            {"error": "Token exchange failed", "raw": res.text},
-            status_code=400
-        )
+    data = res.json()
 
-    token_data = res.json()
-
-    # Clean response for frontend
-    return JSONResponse({
+    return {
         "success": True,
-        "message": "Instagram Login Successful",
-        "access_token_response": token_data
-    })
+        "access_token": data
+    }
