@@ -55,14 +55,13 @@ REDIRECT_URI = "https://backend-veris.skyserver.net.in/api/instagram/callback"
 def instagram_login():
 
     scope = (
-        "instagram_business_basic,"
-        "instagram_business_manage_comments,"
-        "instagram_business_manage_messages,"
-        "instagram_business_content_publish,"
-        "pages_show_list,"
-        "pages_manage_metadata,"
-        "pages_read_engagement"
-    )
+    "pages_show_list,"
+    "pages_manage_metadata,"
+    "pages_read_engagement,"
+    "pages_read_user_content,"
+    "pages_manage_posts"
+)
+
 
     auth_url = (
         "https://www.facebook.com/v21.0/dialog/oauth"
