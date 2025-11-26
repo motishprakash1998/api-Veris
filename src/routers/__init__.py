@@ -12,6 +12,7 @@ from .users_dashboard.main import router as user_dashboard_route
 from .social_media.facebook.main import router as fb_router
 from .assembly.main import router as assembly_routers
 from .social_media.x.login import router as x_router
+from .user_management.main import router as user_management_router
 __all__ = [
     "users_router",
     "feedback_router",
@@ -26,4 +27,5 @@ __all__ = [
     "fb_router",
     "assembly_routers",
     "x_router",
+    "user_management_router"
            ]
