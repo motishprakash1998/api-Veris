@@ -42,7 +42,7 @@ def get_valid_access_token(user: TwitterUser, db: Session):
     payload = {
         "refresh_token": user.refresh_token,
         "grant_type": "refresh_token",
-        "client_id": os.getenv("TWITTER_CLIENT_ID"),
+        "client_id": os.getenv("TWITTER_CLIENT_ID","c3hTZmhyY1hCUTNUVXduMm0yVEo6MTpjaQ"),
     }
 
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
