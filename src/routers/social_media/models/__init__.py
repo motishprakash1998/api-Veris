@@ -12,6 +12,7 @@ from .models import (Platform,
                      RawApiResponse,
                      PrivacyFlag
                      )
+from .x_models import (TwitterUser)
 
 __all__ = [
     "Platform",
@@ -26,5 +27,6 @@ __all__ = [
     "Engagement",
     "FetchJob",
     "RawApiResponse",
-    "PrivacyFlag"
+    "PrivacyFlag",
+    "TwitterUser",
 ]
