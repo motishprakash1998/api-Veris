@@ -2,7 +2,7 @@ import os
 import base64
 import hashlib
 import secrets
-from urllib.parse import quote
+from urllib.parse import quote_plus
 from datetime import datetime, timedelta
 
 import requests
@@ -15,7 +15,13 @@ from src.database import get_db
 
 router = APIRouter(prefix="/api/twitter", tags=["Twitter Login"])
 
-TEMP_STORE = {}   # Replace with Redis later
+TEMP_STORE = {}  # Replace with Redis later
+
+# -----------------------------
+# HARDCODED CREDENTIALS
+# -----------------------------
+CLIENT_ID = "c3hTZmhyY1hCUTNUVXduMm0yVEo6MTpjaQ"
+REDIRECT_URI = "https://backend-veris.skyserver.net.in/api/twitter/callback"
 
 
 # ----------------------------------------------------
@@ -30,36 +36,37 @@ def generate_pkce():
 
 
 # ----------------------------------------------------
-# TOKEN AUTO REFRESH SYSTEM
+# REFRESH TOKEN HANDLER
 # ----------------------------------------------------
 def get_valid_access_token(user: TwitterUser, db: Session):
-    # Still valid
+
     if user.token_expires_at and user.token_expires_at > datetime.utcnow():
         return user.access_token
 
-    # Expired - refresh
-    url = "https://api.twitter.com/2/oauth2/token"
+    refresh_url = "https://api.twitter.com/2/oauth2/token"
+
     payload = {
         "refresh_token": user.refresh_token,
         "grant_type": "refresh_token",
-        "client_id": os.getenv("TWITTER_CLIENT_ID","c3hTZmhyY1hCUTNUVXduMm0yVEo6MTpjaQ"),
+        "client_id": CLIENT_ID,
     }
 
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
-    res = requests.post(url, data=payload, headers=headers)
+    res = requests.post(refresh_url, data=payload, headers=headers)
 
     if res.status_code != 200:
-        print("Refresh failed:", res.text)
+        print("TOKEN REFRESH FAILED:", res.text)
         return None
 
-    token_data = res.json()
+    data = res.json()
 
-    user.access_token = token_data["access_token"]
-    user.refresh_token = token_data.get("refresh_token", user.refresh_token)
-    user.token_expires_at = datetime.utcnow() + timedelta(seconds=token_data["expires_in"])
+    user.access_token = data["access_token"]
+    user.refresh_token = data.get("refresh_token", user.refresh_token)
+    user.token_expires_at = datetime.utcnow() + timedelta(seconds=data["expires_in"])
 
     db.commit()
+
     return user.access_token
 
 
@@ -68,26 +75,25 @@ def get_valid_access_token(user: TwitterUser, db: Session):
 # ----------------------------------------------------
 @router.get("/login")
 def twitter_login():
-    client_id = os.getenv("TWITTER_CLIENT_ID","c3hTZmhyY1hCUTNUVXduMm0yVEo6MTpjaQ")
-
-    redirect_uri = "https://backend-veris.skyserver.net.in/api/twitter/callback"
 
     verifier, challenge = generate_pkce()
     state = secrets.token_urlsafe(16)
 
     TEMP_STORE[state] = {
         "verifier": verifier,
-        "redirect_uri": redirect_uri
+        "redirect_uri": REDIRECT_URI
     }
 
     scopes = "tweet.read users.read offline.access email.read"
 
+    encoded_redirect = quote_plus(REDIRECT_URI)
+
     auth_url = (
         "https://twitter.com/i/oauth2/authorize"
         f"?response_type=code"
-        f"&client_id={client_id}"
-        f"&redirect_uri={quote(redirect_uri)}"
-        f"&scope={quote(scopes)}"
+        f"&client_id={CLIENT_ID}"
+        f"&redirect_uri={encoded_redirect}"
+        f"&scope={quote_plus(scopes)}"
         f"&state={state}"
         f"&code_challenge={challenge}"
         f"&code_challenge_method=S256"
@@ -97,63 +103,61 @@ def twitter_login():
 
 
 # ----------------------------------------------------
-# STEP 2 — CALLBACK (Save User in DB + Tokens)
+# STEP 2 — CALLBACK
 # ----------------------------------------------------
 @router.get("/callback")
 def twitter_callback(request: Request, db: Session = Depends(get_db)):
+
     code = request.query_params.get("code")
     state = request.query_params.get("state")
 
     if not code or state not in TEMP_STORE:
-        return JSONResponse({"error": "Invalid OAuth"}, status_code=400)
+        return JSONResponse({"error": "OAuth failed"}, status_code=400)
 
     verifier = TEMP_STORE[state]["verifier"]
     redirect_uri = TEMP_STORE[state]["redirect_uri"]
 
-    client_id = os.getenv("TWITTER_CLIENT_ID","c3hTZmhyY1hCUTNUVXduMm0yVEo6MTpjaQ")
-
-    # ---- Exchange code → token ----
     token_url = "https://api.twitter.com/2/oauth2/token"
+
     payload = {
         "code": code,
         "grant_type": "authorization_code",
-        "client_id": client_id,
+        "client_id": CLIENT_ID,
         "redirect_uri": redirect_uri,
         "code_verifier": verifier,
     }
 
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    token_res = requests.post(token_url, data=payload, headers=headers)
+    res = requests.post(token_url, data=payload, headers=headers)
 
-    if token_res.status_code != 200:
-        return JSONResponse({"error": "Token failed", "details": token_res.text}, status_code=400)
+    if res.status_code != 200:
+        return JSONResponse({"error": "Token exchange failed", "raw": res.text}, status_code=400)
 
-    token_data = token_res.json()
-    access_token = token_data["access_token"]
-    refresh_token = token_data.get("refresh_token")
-    expires_in = token_data["expires_in"]
+    tokens = res.json()
 
-    # ---- Fetch user info ----
+    access_token = tokens["access_token"]
+    refresh_token = tokens.get("refresh_token")
+    expires_in = tokens["expires_in"]
+
     headers = {"Authorization": f"Bearer {access_token}"}
 
     user_res = requests.get(
         "https://api.twitter.com/2/users/me",
         headers=headers,
-        params={"user.fields": "id,name,username,profile_image_url,email"},
+        params={"user.fields": "id,name,username,profile_image_url,email"}
     )
 
-    user_info = user_res.json().get("data", {})
+    user_data = user_res.json().get("data", {})
 
-    # ---- Save in DB ----
-    user = db.query(TwitterUser).filter_by(id=user_info["id"]).first()
+    user = db.query(TwitterUser).filter_by(id=user_data["id"]).first()
 
     if not user:
-        user = TwitterUser(id=user_info["id"])
+        user = TwitterUser(id=user_data["id"])
 
-    user.name = user_info.get("name")
-    user.username = user_info.get("username")
-    user.profile_image_url = user_info.get("profile_image_url")
-    user.email = user_info.get("email")
+    user.name = user_data.get("name")
+    user.username = user_data.get("username")
+    user.profile_image_url = user_data.get("profile_image_url")
+    user.email = user_data.get("email")
 
     user.access_token = access_token
     user.refresh_token = refresh_token
@@ -162,23 +166,20 @@ def twitter_callback(request: Request, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
 
-    return {
-        "success": True,
-        "id": user.id
-    }
+    return {"success": True, "id": user.id}
 
 
 # ----------------------------------------------------
-# FRONTEND CALL — Get User Data (Auto Token Refresh)
+# USER DATA WITH AUTO REFRESH
 # ----------------------------------------------------
 @router.get("/user/{user_id}")
 def get_user_data(user_id: str, db: Session = Depends(get_db)):
+
     user = db.query(TwitterUser).filter_by(id=user_id).first()
 
     if not user:
         return {"error": "User not found"}
 
-    # Auto refresh token
     get_valid_access_token(user, db)
 
     return {
