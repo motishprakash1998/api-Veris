@@ -10,8 +10,8 @@ from fastapi import APIRouter, Request, Depends
 from fastapi.responses import RedirectResponse, JSONResponse
 from sqlalchemy.orm import Session
 
-from models import TwitterUser
-from database import get_db
+from src.routers.social_media.models.x_models import TwitterUser
+from src.database import get_db
 
 router = APIRouter(prefix="/api/twitter", tags=["Twitter Login"])
 
