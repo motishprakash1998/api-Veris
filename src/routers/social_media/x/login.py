@@ -212,3 +212,63 @@ def get_user_data(user_id: str, db: Session = Depends(get_db)):
         "username": user.username,
         "profile_image_url": user.profile_image_url,
     }
+
+
+
+# ----------------------------------------------------------
+# 3️⃣ PUBLIC USER TWEETS (ANY USER)
+# ----------------------------------------------------------
+@router.get("/public/{username}")
+def get_public_user_tweets(username: str):
+
+    # FIRST — get user id
+    lookup = requests.get(
+        f"https://api.twitter.com/2/users/by/username/{username}",
+        headers={"Authorization": f"Bearer YOUR_BEARER_TOKEN"}
+    )
+
+    if lookup.status_code != 200:
+        return lookup.json()
+
+    user_id = lookup.json()["data"]["id"]
+
+    # NOW fetch tweets
+    tweets = requests.get(
+        f"https://api.twitter.com/2/users/{user_id}/tweets",
+        headers={"Authorization": f"Bearer YOUR_BEARER_TOKEN"}
+    )
+
+    return tweets.json()
+
+
+# ----------------------------------------------------------
+# 4️⃣ TRENDING TOPICS (WORKAROUND)
+# ----------------------------------------------------------
+"""
+Twitter API v2 DOES NOT HAVE /trends/place OR TRENDING API ANYMORE.
+The only possible way:
+
+Option A — Use Twitter V1.1 API (Needs Elevated Access)
+    GET https://api.twitter.com/1.1/trends/place.json?id=1
+
+Option B — Use X Search API (v2) to simulate trending:
+    - Search for highly engaged tweets
+"""
+@router.get("/trending")
+def trending_topics():
+
+    headers = {"Authorization": "Bearer YOUR_BEARER_TOKEN"}
+
+    q = "news OR trending -is:retweet"
+
+    r = requests.get(
+        "https://api.twitter.com/2/tweets/search/recent",
+        headers=headers,
+        params={
+            "query": q,
+            "tweet.fields": "public_metrics,created_at",
+            "max_results": 20
+        }
+    )
+
+    return r.json()
