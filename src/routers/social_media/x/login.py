@@ -111,48 +111,68 @@ def twitter_callback(request: Request, db: Session = Depends(get_db)):
     code = request.query_params.get("code")
     state = request.query_params.get("state")
 
-    if not code or state not in TEMP_STORE:
-        return JSONResponse({"error": "OAuth failed"}, status_code=400)
+    if not code:
+        return JSONResponse({"error": "Missing authorization code"}, status_code=400)
 
-    verifier = TEMP_STORE[state]["verifier"]
-    redirect_uri = TEMP_STORE[state]["redirect_uri"]
+    if state != TEMP_STORE.get("state"):
+        return JSONResponse({"error": "Invalid OAuth state"}, status_code=400)
 
+    verifier = TEMP_STORE.get("verifier")
+    redirect_uri = TEMP_STORE.get("redirect_uri")
+    client_id = CLIENT_ID
+
+    # ----------------------------------------
+    # EXCHANGE CODE → TOKEN
+    # ----------------------------------------
     token_url = "https://api.twitter.com/2/oauth2/token"
-
     payload = {
         "code": code,
         "grant_type": "authorization_code",
-        "client_id": CLIENT_ID,
+        "client_id": client_id,
         "redirect_uri": redirect_uri,
         "code_verifier": verifier,
     }
 
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    res = requests.post(token_url, data=payload, headers=headers)
+    token_res = requests.post(token_url, data=payload, headers=headers)
 
-    if res.status_code != 200:
-        return JSONResponse({"error": "Token exchange failed", "raw": res.text}, status_code=400)
+    if token_res.status_code != 200:
+        return JSONResponse(
+            {"error": "Token request failed", "details": token_res.text},
+            status_code=400,
+        )
 
-    tokens = res.json()
+    token_data = token_res.json()
+    access_token = token_data["access_token"]
+    refresh_token = token_data.get("refresh_token")
+    expires_in = token_data.get("expires_in", 7200)
 
-    access_token = tokens["access_token"]
-    refresh_token = tokens.get("refresh_token")
-    expires_in = tokens["expires_in"]
-
+    # ----------------------------------------
+    # FETCH USER INFO
+    # ----------------------------------------
+    user_info_url = "https://api.twitter.com/2/users/me"
     headers = {"Authorization": f"Bearer {access_token}"}
+    params = {"user.fields": "id,name,username,profile_image_url,email"}
 
-    user_res = requests.get(
-        "https://api.twitter.com/2/users/me",
-        headers=headers,
-        params={"user.fields": "id,name,username,profile_image_url,email"}
-    )
+    user_res = requests.get(user_info_url, headers=headers, params=params)
+
+    if user_res.status_code != 200:
+        return JSONResponse(
+            {"error": "Failed to fetch user info", "details": user_res.text},
+            status_code=400,
+        )
 
     user_data = user_res.json().get("data", {})
 
-    user = db.query(TwitterUser).filter_by(id=user_data["id"]).first()
+    # ----------------------------------------
+    # SAVE USER IN DATABASE
+    # ----------------------------------------
+    twitter_id = user_data["id"]
+
+    user = db.query(TwitterUser).filter_by(id=twitter_id).first()
 
     if not user:
-        user = TwitterUser(id=user_data["id"])
+        user = TwitterUser(id=twitter_id)
 
     user.name = user_data.get("name")
     user.username = user_data.get("username")
@@ -166,7 +186,17 @@ def twitter_callback(request: Request, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
 
-    return {"success": True, "id": user.id}
+    # ----------------------------------------
+    # FRONTEND RESPONSE
+    # ----------------------------------------
+    return {
+        "success": True,
+        "id": twitter_id,
+        "name": user.name,
+        "username": user.username,
+        "profile_image_url": user.profile_image_url,
+        "email": user.email,
+    }
 
 
 # ----------------------------------------------------
