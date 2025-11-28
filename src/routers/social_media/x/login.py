@@ -110,7 +110,7 @@ def twitter_callback(request: Request, db: Session = Depends(get_db)):
     verifier = TEMP_STORE[state]["verifier"]
     redirect_uri = TEMP_STORE[state]["redirect_uri"]
 
-    client_id = os.getenv("TWITTER_CLIENT_ID")
+    client_id = os.getenv("TWITTER_CLIENT_ID","c3hTZmhyY1hCUTNUVXduMm0yVEo6MTpjaQ")
 
     # ---- Exchange code → token ----
     token_url = "https://api.twitter.com/2/oauth2/token"
