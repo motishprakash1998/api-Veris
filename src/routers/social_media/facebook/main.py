@@ -2,11 +2,11 @@ import os
 import re
 import requests
 from . import controller
-from typing import Optional
+from typing import Optional,List
 from src.database import get_db
 from urllib.parse import urlparse
 from sqlalchemy.orm import Session
-from fastapi import APIRouter, HTTPException, Query, Depends, BackgroundTasks,Request
+from fastapi import APIRouter, HTTPException, Query, Depends, BackgroundTasks,Request, status
 from fastapi.responses import RedirectResponse, JSONResponse
 from dotenv import load_dotenv
 
@@ -271,5 +271,156 @@ def get_page_posts(
             "prev_cursor": prev_cursor,
             "has_next": bool(next_cursor),
             "has_previous": bool(prev_cursor),
+        }
+    )
+    
+
+
+# ====== CONFIG (change these or set env vars) ======
+LOGIN_APP_ID = os.environ.get("FB_APP_ID", "2037441327057334")
+LOGIN_APP_SECRET = os.environ.get("FB_APP_SECRET", "f6579b31b6f6186aecda29b5be8a4481")
+# Make sure this matches exactly the URI registered in Facebook App settings
+LOGIN_REDIRECT_URI = os.environ.get("FB_REDIRECT_URI", "https://backend-veris.skyserver.net.in/api/facebook/callback")
+FB_VERSION = os.environ.get("FB_VERSION", "v16.0")
+
+REQUIRED_SCOPE = ["email", "public_profile"]
+OPTIONAL_SCOPES = {
+    "user_link": "Access user profile URL (link)",
+    "user_posts": "Read user timeline posts (user_posts)",
+    "user_photos": "Read user photos (user_photos)",
+    "user_location": "Access user location (user_location)",
+}
+
+
+def _ensure_session(request: Request) -> None:
+    if getattr(request, "session", None) is None:
+        raise RuntimeError(
+            "Session middleware not configured. Add SessionMiddleware to your FastAPI app:\n"
+            "app.add_middleware(SessionMiddleware, secret_key=...)"
+        )
+
+
+@router.get("/login")
+async def facebook_login(request: Request) -> RedirectResponse:
+    """
+    Redirects the user to Facebook OAuth dialog.
+    Query: scopes=... (repeatable) for optional scopes chosen by user.
+    """
+    # parse multiple scopes from query string robustly
+    raw_qs = urlparse.urlparse(str(request.url)).query
+    parsed = urlparse.parse_qs(raw_qs)
+    chosen: List[str] = parsed.get("scopes", [])
+
+    # Build final scope list (required + chosen optional ones that we recognize)
+    scopes = list(REQUIRED_SCOPE)
+    for c in chosen:
+        if c in OPTIONAL_SCOPES and c not in scopes:
+            scopes.append(c)
+
+    scope_str = ",".join(scopes)
+
+    auth_url = (
+        f"https://www.facebook.com/{FB_VERSION}/dialog/oauth?"
+        f"client_id={LOGIN_APP_ID}&redirect_uri={urlparse.quote(LOGIN_REDIRECT_URI)}"
+        f"&scope={urlparse.quote(scope_str)}&response_type=code"
+    )
+
+    # Save requested scopes in session for later display/use
+    _ensure_session(request)
+    request.session["requested_scopes"] = scopes
+
+    return RedirectResponse(url=auth_url, status_code=status.HTTP_302_FOUND)
+
+
+@router.get("/callback", response_class=JSONResponse)
+async def callback(request: Request) -> JSONResponse:
+    """
+    Callback endpoint Facebook redirects to with ?code=... or ?error=...
+    Returns JSON containing:
+      - granted_perms: list of permissions granted
+      - requested_scopes: what we requested
+      - me: the /me Graph response (only fields allowed by granted perms)
+      - token_info: optionally the raw token exchange response
+    """
+    _ensure_session(request)
+    qs = request.query_params
+
+    if "error" in qs:
+        return JSONResponse({"error": dict(qs)}, status_code=400)
+
+    code = qs.get("code")
+    if not code:
+        return JSONResponse({"error": "No code parameter in callback"}, status_code=400)
+
+    # Exchange code for access token
+    token_url = f"https://graph.facebook.com/{FB_VERSION}/oauth/access_token"
+    token_params = {
+        "client_id": LOGIN_APP_ID,
+        "redirect_uri": LOGIN_REDIRECT_URI,
+        "client_secret": LOGIN_APP_SECRET,
+        "code": code,
+    }
+    token_resp = requests.get(token_url, params=token_params)
+    try:
+        token_json = token_resp.json()
+    except Exception as e:
+        return JSONResponse({"error": "Token response not JSON", "detail": str(e)}, status_code=500)
+
+    if "access_token" not in token_json:
+        return JSONResponse({"error": "No access_token in token response", "token_response": token_json}, status_code=400)
+
+    access_token = token_json["access_token"]
+    request.session["access_token"] = access_token
+    request.session["token_response"] = token_json
+
+    # Get granted permissions
+    perms_url = f"https://graph.facebook.com/{FB_VERSION}/me/permissions"
+    perms_resp = requests.get(perms_url, params={"access_token": access_token})
+    try:
+        perms_json = perms_resp.json()
+    except Exception as e:
+        return JSONResponse({"error": "Permissions response not JSON", "detail": str(e)}, status_code=500)
+
+    granted = [p["permission"] for p in perms_json.get("data", []) if p.get("status") == "granted"]
+    request.session["granted_perms"] = granted
+
+    # Decide which fields to request based on granted perms
+    fields = ["id", "name"]
+    if "email" in granted:
+        fields.append("email")
+    # include picture always if public_profile was in required scope (public_profile implied)
+    fields.append("picture.width(400).height(400)")
+
+    if "user_link" in granted:
+        fields.append("link")
+    if "user_location" in granted:
+        fields.append("location")
+
+    fetch_posts = "user_posts" in granted
+    fetch_photos = "user_photos" in granted
+
+    fields_str = ",".join(fields)
+    if fetch_posts:
+        fields_str += ",posts.limit(5){message,created_time}"
+    if fetch_photos:
+        fields_str += ",photos.limit(5){name,picture}"
+
+    me_url = f"https://graph.facebook.com/{FB_VERSION}/me"
+    me_params = {"fields": fields_str, "access_token": access_token}
+
+    me_resp = requests.get(me_url, params=me_params)
+    try:
+        me_json = me_resp.json()
+    except Exception as e:
+        return JSONResponse({"error": "/me response not JSON", "detail": str(e)}, status_code=500)
+
+    request.session["me_data"] = me_json
+
+    return JSONResponse(
+        {
+            "requested_scopes": request.session.get("requested_scopes"),
+            "granted_perms": granted,
+            "token_info": token_json,  # raw token exchange response (useful for dev)
+            "me": me_json,
         }
     )
