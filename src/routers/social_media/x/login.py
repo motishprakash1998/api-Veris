@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from src.routers.social_media.models.x_models import TwitterUser
 from src.database import get_db
+# from src.routers.social_media.x.controllers import rapidapi_get, extract_clean_user_info
 
 router = APIRouter(prefix="/api/twitter", tags=["Twitter Login"])
 
@@ -218,57 +219,112 @@ def get_user_data(user_id: str, db: Session = Depends(get_db)):
 # ----------------------------------------------------------
 # 3️⃣ PUBLIC USER TWEETS (ANY USER)
 # ----------------------------------------------------------
-@router.get("/public/{username}")
-def get_public_user_tweets(username: str):
+RAPID_API_KEY = "3ce8c354e3msh22662032620dd62p121c70jsn15208e443454"
+RAPID_API_HOST = "twitter241.p.rapidapi.com"
 
-    # FIRST — get user id
-    lookup = requests.get(
-        f"https://api.twitter.com/2/users/by/username/{username}",
-        headers={"Authorization": f"Bearer YOUR_BEARER_TOKEN"}
-    )
 
-    if lookup.status_code != 200:
-        return lookup.json()
+@router.get("/search")
+def search_public_tweets(query: str, count: int = 20):
+    url = "https://twitter241.p.rapidapi.com/search-v2"
 
-    user_id = lookup.json()["data"]["id"]
+    params = {
+        "type": "Top",
+        "count": str(count),
+        "query": query,
+    }
 
-    # NOW fetch tweets
-    tweets = requests.get(
-        f"https://api.twitter.com/2/users/{user_id}/tweets",
-        headers={"Authorization": f"Bearer YOUR_BEARER_TOKEN"}
-    )
+    headers = {
+        "x-rapidapi-key": RAPID_API_KEY,
+        "x-rapidapi-host": RAPID_API_HOST,
+    }
 
-    return tweets.json()
+    res = requests.get(url, headers=headers, params=params)
 
+    if res.status_code != 200:
+        return {"error": "Search failed", "details": res.text}
+
+    data = res.json()
+
+    clean_results = []
+
+    # Extract important tweet info
+    for item in data.get("data", {}).get("tweets", []):
+        clean_results.append({
+            "tweet_id": item.get("id"),
+            "text": item.get("text"),
+            "created_at": item.get("created_at"),
+            "retweet_count": item.get("retweet_count"),
+            "reply_count": item.get("reply_count"),
+            "favorite_count": item.get("favorite_count"),
+            "user": {
+                "name": item.get("user", {}).get("name"),
+                "username": item.get("user", {}).get("screen_name"),
+                "profile_image": item.get("user", {}).get("profile_image_url_https"),
+                "verified": item.get("user", {}).get("verified"),
+            }
+        })
+
+    return {
+        "success": True,
+        "results": clean_results,
+    }
 
 # ----------------------------------------------------------
-# 4️⃣ TRENDING TOPICS (WORKAROUND)
+# GET IMPORTANT USER INFO (CLEANED)
 # ----------------------------------------------------------
-"""
-Twitter API v2 DOES NOT HAVE /trends/place OR TRENDING API ANYMORE.
-The only possible way:
+@router.get("/public/user-info/{username}")
+def public_user_info(username: str):
+    url = "https://twitter241.p.rapidapi.com/user"
 
-Option A — Use Twitter V1.1 API (Needs Elevated Access)
-    GET https://api.twitter.com/1.1/trends/place.json?id=1
+    params = {"username": username}
 
-Option B — Use X Search API (v2) to simulate trending:
-    - Search for highly engaged tweets
-"""
-@router.get("/trending")
-def trending_topics():
+    headers = {
+        "x-rapidapi-key": RAPID_API_KEY,
+        "x-rapidapi-host": RAPID_API_HOST,
+    }
 
-    headers = {"Authorization": "Bearer YOUR_BEARER_TOKEN"}
+    response = requests.get(url, headers=headers, params=params)
 
-    q = "news OR trending -is:retweet"
-
-    r = requests.get(
-        "https://api.twitter.com/2/tweets/search/recent",
-        headers=headers,
-        params={
-            "query": q,
-            "tweet.fields": "public_metrics,created_at",
-            "max_results": 20
+    if response.status_code != 200:
+        return {
+            "success": False,
+            "error": response.text,
+            "status_code": response.status_code
         }
-    )
 
-    return r.json()
+    data = response.json()
+    user = data.get("user", {}).get("result", {})
+
+    # Clean user info
+    legacy = user.get("legacy", {})
+    professional = user.get("professional", {})
+
+    cleaned = {
+        "id": user.get("rest_id"),
+        "name": legacy.get("name"),
+        "username": legacy.get("screen_name"),
+        "description": legacy.get("description"),
+        "verified": user.get("is_blue_verified"),
+        "created_at": legacy.get("created_at"),
+        "followers": legacy.get("followers_count"),
+        "following": legacy.get("friends_count"),
+        "tweets_count": legacy.get("statuses_count"),
+        "listed_count": legacy.get("listed_count"),
+        "media_count": legacy.get("media_count"),
+        "profile_image": legacy.get("profile_image_url_https"),
+        "banner_image": legacy.get("profile_banner_url"),
+        "location": legacy.get("location"),
+        "website": legacy.get("url"),
+        "professional": {
+            "type": professional.get("professional_type"),
+            "category": professional.get("category", [])
+        },
+        "highlights": user.get("highlights_info", {}),
+        "super_follow_eligible": user.get("super_follow_eligible"),
+        "creator_subscriptions_count": user.get("creator_subscriptions_count")
+    }
+
+    return {
+        "success": True,
+        "user": cleaned
+    }
