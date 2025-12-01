@@ -283,6 +283,7 @@ def create_user(background_tasks: BackgroundTasks, payload: schemas.CreateUserSc
         # send welcome/approval email in background
         background_tasks.add_task(send_account_creation_email, new_user.email, f"{first_name} {last_name}")
 
+        # -- replace your existing profile_payload creation with:
         profile_payload = {
             "first_name": profile.first_name,
             "last_name": profile.last_name,
@@ -290,14 +291,15 @@ def create_user(background_tasks: BackgroundTasks, payload: schemas.CreateUserSc
             "date_of_birth": profile.date_of_birth,
             "gender": (profile.gender.value if getattr(profile, "gender", None) else profile.gender),
             "address": profile.address,
-            "state": profile.state,
+            # map model fields to schema names the schema expects
+            "state_name": profile.state,          # <-- changed key
+            "pc_name": profile.pin_code,          # <-- changed key
             "country": profile.country,
-            "pin_code": profile.pin_code,
             "profile_path": profile.profile_path,
             "emergency_contact": profile.emergency_contact,
             "profile_completed": bool(profile.profile_completed),
             "created_at": profile.created_at,
-            "updated_at": profile.updated_at
+            "updated_at": profile.updated_at,
         }
         profile_data = schemas.UserProfileData(**profile_payload)
 

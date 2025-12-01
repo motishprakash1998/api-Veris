@@ -143,24 +143,25 @@ class UpdateProfilePathRequest(BaseModel):
 # Combined User Profile Data
 # =============================
 class UserProfileData(BaseModel):
-    first_name: Optional[str]
-    last_name: Optional[str]
+    first_name: str
+    last_name: str
     phone_number: Optional[str]
-    date_of_birth: Optional[date]
+    date_of_birth: Optional[datetime]
     gender: Optional[str]
     address: Optional[str]
-    state: Optional[str]
+    state_name: Optional[str] = Field(alias="state")   # accept "state" as input
+    pc_name: Optional[str] = Field(alias="pin_code")   # accept "pin_code" as input
     country: Optional[str]
-    pin_code: Optional[str]
     profile_path: Optional[str]
-    state_name: Optional[str]
-    pc_name: Optional[str]
     emergency_contact: Optional[str]
-    profile_completed: Optional[bool]
-    created_at: datetime
-    updated_at: datetime
+    profile_completed: bool = False
+    created_at: Optional[datetime]
+    updated_at: Optional[datetime]
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = {
+        "populate_by_name": True,   # allow access by field name, and accept aliases
+        "from_attributes": True     # if you want to validate from ORM objects
+    }
 
 
 class UserData(BaseModel):
