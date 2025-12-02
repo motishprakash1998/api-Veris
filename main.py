@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from src.config import APPNAME, VERSION
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 from src.routers import (users_router, 
                         feedback_router,election_services_router,admin_router,waiting_employees_router,
                         admin_dashboard_router,verification_routes,ig_router,user_dashboard_route,fb_router,
@@ -33,6 +34,11 @@ app.add_middleware(
     allow_credentials=True, # Allow cookies and credentials
     allow_methods=["*"],    # Allow all HTTP methods
     allow_headers=["*"],    # Allow all headers
+)
+# ⭐ REQUIRED FIX ⭐
+app.add_middleware(
+    SessionMiddleware,
+    secret_key="9ahd9283h29dh923hd293hdsd92hsd9hs",  # change this
 )
 
 # Including all the routes for the 'users' module

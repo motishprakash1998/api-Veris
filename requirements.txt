@@ -20,3 +20,4 @@ numpy
 firebase-admin
 rapidfuzz
 phonetics
+itsdangerous
