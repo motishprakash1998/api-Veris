@@ -4,7 +4,7 @@ import requests
 from . import controller
 from typing import Optional,List
 from src.database import get_db
-from urllib.parse import urlparse
+from urllib.parse import urlparse,parse_qs, quote
 from sqlalchemy.orm import Session
 from fastapi import APIRouter, HTTPException, Query, Depends, BackgroundTasks,Request, status
 from fastapi.responses import RedirectResponse, JSONResponse
@@ -307,8 +307,8 @@ async def facebook_login(request: Request) -> RedirectResponse:
     Query: scopes=... (repeatable) for optional scopes chosen by user.
     """
     # parse multiple scopes from query string robustly
-    raw_qs = urlparse.urlparse(str(request.url)).query
-    parsed = urlparse.parse_qs(raw_qs)
+    raw_qs = urlparse(str(request.url)).query
+    parsed = parse_qs(raw_qs)
     chosen: List[str] = parsed.get("scopes", [])
 
     # Build final scope list (required + chosen optional ones that we recognize)
@@ -321,8 +321,8 @@ async def facebook_login(request: Request) -> RedirectResponse:
 
     auth_url = (
         f"https://www.facebook.com/{FB_VERSION}/dialog/oauth?"
-        f"client_id={LOGIN_APP_ID}&redirect_uri={urlparse.quote(LOGIN_REDIRECT_URI)}"
-        f"&scope={urlparse.quote(scope_str)}&response_type=code"
+        f"client_id={LOGIN_APP_ID}&redirect_uri={quote(LOGIN_REDIRECT_URI)}"
+        f"&scope={quote(scope_str)}&response_type=code"
     )
 
     # Save requested scopes in session for later display/use
