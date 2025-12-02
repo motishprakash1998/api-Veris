@@ -501,7 +501,7 @@ def list_affidavits(
     candidate_name: Optional[str] = Query(None, description="Partial or full candidate name"),
     year: Optional[int] = Query(None),
     state_name: Optional[str] = Query(None),
-    pc_name: Optional[str] = Query(None),
+    ac_name: Optional[str] = Query(None),
     status: Optional[str] = Query(None, description="active / inactive"),
     verification_status: Optional[str] = Query(None, description="under_review / verified_employee / verified_admin / rejected_admin"),
     party_name: Optional[str] = Query(None),
@@ -559,7 +559,7 @@ def list_affidavits(
         if assigned_state:
             q = q.filter(models.AssemblyAffidavit.state_name.ilike(f"%{assigned_state}%"))
         if assigned_pc:
-            q = q.filter(models.AssemblyAffidavit.pc_name.ilike(f"%{assigned_pc}%"))
+            q = q.filter(models.AssemblyAffidavit.ac_name.ilike(f"%{assigned_pc}%"))
 
     # Build filters from query params
     if candidate_name:
@@ -568,8 +568,8 @@ def list_affidavits(
         q = q.filter(models.AssemblyAffidavit.year == year)
     if state_name:
         q = q.filter(models.AssemblyAffidavit.state_name.ilike(f"%{state_name.strip()}%"))
-    if pc_name:
-        q = q.filter(models.AssemblyAffidavit.pc_name.ilike(f"%{pc_name.strip()}%"))
+    if ac_name:
+        q = q.filter(models.AssemblyAffidavit.ac_name.ilike(f"%{ac_name.strip()}%"))
     if party_name:
         q = q.filter(models.AssemblyAffidavit.party_name.ilike(f"%{party_name.strip()}%"))
 
