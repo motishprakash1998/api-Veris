@@ -333,7 +333,10 @@ async def facebook_login(request: Request) -> RedirectResponse:
 
 from src.routers.social_media.models.facebook_models import FacebookUser
 @router.get("/callback", response_class=JSONResponse)
-async def callback(request: Request,db: Session = get_db()) -> JSONResponse:
+async def callback(
+    request: Request,
+    db: Session = Depends(get_db)
+) -> JSONResponse:
     """
     Callback endpoint Facebook redirects to with ?code=... or ?error=...
     Returns JSON containing:
@@ -449,15 +452,20 @@ async def callback(request: Request,db: Session = get_db()) -> JSONResponse:
 
 
 @router.get("/user/{fb_id}")
-async def get_facebook_user(fb_id: str, db: Session = get_db()):
-    user = db.query(FacebookUser).filter(FacebookUser.fb_id == fb_id).first()
+async def get_facebook_user(
+    fb_id: str,
+    db: Session = Depends(get_db)
+):
+    user = db.query(FacebookUser).filter(FacebookUser.fb_user_id == fb_id).first()
+
     if not user:
         return {"error": "User not found"}
 
     return {
-    "fb_id": user.fb_id,
-    "name": user.name,
-    "email": user.email,
-    "picture": user.picture,
-    "raw_data": user.raw_data,
+        "fb_id": user.fb_user_id,
+        "name": user.name,
+        "email": user.email,
+        "picture_url": user.picture_url,
+        "page_id": user.fb_page_id,
+        "access_token": user.access_token,
     }
