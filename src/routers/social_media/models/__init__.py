@@ -13,6 +13,8 @@ from .models import (Platform,
                      PrivacyFlag
                      )
 from .x_models import (TwitterUser)
+from .facebook_models import (FacebookUser)
+
 
 __all__ = [
     "Platform",
@@ -29,4 +31,5 @@ __all__ = [
     "RawApiResponse",
     "PrivacyFlag",
     "TwitterUser",
+    "FacebookUser"
 ]

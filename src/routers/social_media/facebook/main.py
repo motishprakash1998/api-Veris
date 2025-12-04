@@ -331,9 +331,9 @@ async def facebook_login(request: Request) -> RedirectResponse:
 
     return RedirectResponse(url=auth_url, status_code=status.HTTP_302_FOUND)
 
-
+from src.routers.social_media.models.facebook_models import FacebookUser
 @router.get("/callback", response_class=JSONResponse)
-async def callback(request: Request) -> JSONResponse:
+async def callback(request: Request,db: Session = get_db()) -> JSONResponse:
     """
     Callback endpoint Facebook redirects to with ?code=... or ?error=...
     Returns JSON containing:
@@ -415,6 +415,28 @@ async def callback(request: Request) -> JSONResponse:
         return JSONResponse({"error": "/me response not JSON", "detail": str(e)}, status_code=500)
 
     request.session["me_data"] = me_json
+    # ---- STORE INTO DATABASE ----
+    fb_id = me_json.get("id")
+    existing = db.query(FacebookUser).filter(FacebookUser.fb_id == fb_id).first()
+
+
+    if existing:
+        existing.name = me_json.get("name")
+        existing.email = me_json.get("email")
+        existing.picture = me_json.get("picture", {})
+        existing.raw_data = me_json
+    else:
+        new_user = FacebookUser(
+        fb_id=fb_id,
+        name=me_json.get("name"),
+        email=me_json.get("email"),
+        picture=me_json.get("picture", {}),
+        raw_data=me_json,
+        )
+        db.add(new_user)
+
+
+    db.commit()
 
     return JSONResponse(
         {
@@ -424,3 +446,18 @@ async def callback(request: Request) -> JSONResponse:
             "me": me_json,
         }
     )
+
+
+@router.get("/user/{fb_id}")
+async def get_facebook_user(fb_id: str, db: Session = get_db()):
+    user = db.query(FacebookUser).filter(FacebookUser.fb_id == fb_id).first()
+    if not user:
+        return {"error": "User not found"}
+
+    return {
+    "fb_id": user.fb_id,
+    "name": user.name,
+    "email": user.email,
+    "picture": user.picture,
+    "raw_data": user.raw_data,
+    }

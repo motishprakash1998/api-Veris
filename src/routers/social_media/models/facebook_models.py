@@ -1,0 +1,19 @@
+from datetime import datetime
+from sqlalchemy import Column, Integer, String, Text, TIMESTAMP
+from sqlalchemy.orm import declarative_base
+
+Base = declarative_base()
+
+class FacebookUser(Base):
+    __tablename__ = "facebook_users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    fb_user_id = Column(String(50), unique=True, nullable=False)
+    name = Column(String(255))
+    email = Column(String(255))
+    picture_url = Column(Text)
+    fb_page_id = Column(Text, unique=True, nullable=False)
+    access_token = Column(Text)
+    token_expires_at = Column(TIMESTAMP)
+    created_at = Column(TIMESTAMP, default=datetime.utcnow)
+    updated_at = Column(TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow)
