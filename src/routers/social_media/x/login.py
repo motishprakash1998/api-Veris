@@ -168,10 +168,10 @@ def twitter_callback(request: Request, db: Session = Depends(get_db)):
     # -----------------------------------
     # SAVE USER TO DATABASE
     # -----------------------------------
-    user = db.query(TwitterUser).filter_by(id=twitter_id).first()
+    user = db.query(TwitterUser).filter_by(twitter_id=twitter_id).first()
 
     if not user:
-        user = TwitterUser(id=twitter_id)
+        user = TwitterUser(twitter_id=twitter_id)
 
     user.name = data.get("name")
     user.username = data.get("username")
@@ -184,7 +184,7 @@ def twitter_callback(request: Request, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
 
-    jwt_token =({"user_id": twitter_id})
+    jwt_token =({"user_twitter_id": twitter_id})
 
     # -------------------------------
     # REDIRECT TO FRONTEND

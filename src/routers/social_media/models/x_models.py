@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime
+from sqlalchemy import Column, String, DateTime,Integer
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
@@ -6,7 +6,8 @@ Base = declarative_base()
 class TwitterUser(Base):
     __tablename__ = "twitter_users"
 
-    id = Column(String, primary_key=True)  # Twitter user ID
+    id = Column(Integer, primary_key=True)
+    twitter_id = Column(String, primary_key=True)  # Twitter user ID
     name = Column(String)
     username = Column(String)
     email = Column(String)
