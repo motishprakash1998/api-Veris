@@ -275,7 +275,6 @@ def get_page_posts(
     )
     
 
-
 # ====== CONFIG (change these or set env vars) ======
 LOGIN_APP_ID = os.environ.get("FB_APP_ID", "2037441327057334")
 LOGIN_APP_SECRET = os.environ.get("FB_APP_SECRET", "f6579b31b6f6186aecda29b5be8a4481")
@@ -469,3 +468,20 @@ async def get_facebook_user(
         "page_id": user.fb_page_id,
         "access_token": user.access_token,
     }
+    
+
+@router.get("/save_page/info")
+def get_page_info(
+    input_value: str = Query(..., description="Facebook Page name or full URL"),
+    db: Session = Depends(get_db),
+):
+    """
+    🔹 Get basic information about a Facebook Page.
+    Accepts both:
+    - Plain name:  LalchandKatariaOfficial
+    - Full URL:    https://www.facebook.com/LalchandKatariaOfficial/
+    """
+    
+
+    return None
+    

@@ -184,13 +184,15 @@ def twitter_callback(request: Request, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
 
-    return {
-        "success": True,
-        "id": twitter_id,
-        "name": user.name,
-        "username": user.username,
-        "profile_image_url": user.profile_image_url,
-    }
+    jwt_token =({"user_id": twitter_id})
+
+    # -------------------------------
+    # REDIRECT TO FRONTEND
+    # -------------------------------
+    FRONTEND_SUCCESS_URL = "https://voxstrategix.com/auth/success"
+    return RedirectResponse(
+        f"{FRONTEND_SUCCESS_URL}?status=true&token={jwt_token}"
+    )
 
 
 # -------------------------------------------------

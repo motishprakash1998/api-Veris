@@ -4,9 +4,9 @@ from datetime import  datetime
 from firebase_admin import messaging, credentials
 import  os
 # Initialize Firebase Admin SDK (use your Firebase credentials JSON)
-FIREBASE_CREDENTIALS = os.getenv("FIREBASE_CREDENTIALS")
-cred = credentials.Certificate(FIREBASE_CREDENTIALS)
-firebase_admin.initialize_app(cred)
+# FIREBASE_CREDENTIALS = os.getenv("FIREBASE_CREDENTIALS")
+# cred = credentials.Certificate(FIREBASE_CREDENTIALS)
+# firebase_admin.initialize_app(cred)
 
 def send_push_notification(fcm_token: str, title: str, body: str):
     """
