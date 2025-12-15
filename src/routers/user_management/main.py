@@ -205,7 +205,20 @@ def get_info(request: Request, db: Session = Depends(get_db), token: str = Depen
                 created_at=profile.created_at,
                 updated_at=profile.updated_at,
             )
+        # -------------------------------
+        # CHECK TWITTER LOGIN
+        # -------------------------------
+        from sqlalchemy import exists
+        from src.routers.social_media.models.x_models import TwitterUser
+        twitter_user = (
+                db.query(TwitterUser)
+                .filter(TwitterUser.id == user.id)
+                .first()
+            )
 
+        twitter_login = bool(twitter_user)
+        twitter_id = twitter_user.twitter_id if twitter_user else None
+        
         user_data = schemas.UserData(
             id=user.id,
             email=user.email,
@@ -214,8 +227,10 @@ def get_info(request: Request, db: Session = Depends(get_db), token: str = Depen
             created_at=user.created_at,
             updated_at=user.updated_at,
             profile=profile_data,
+            twitter_id = twitter_id,
+            twitter_login=bool(twitter_login)
         )
-
+        
         return schemas.UserResponse(
             success=True,
             status=200,

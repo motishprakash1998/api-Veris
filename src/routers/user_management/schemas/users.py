@@ -171,6 +171,8 @@ class UserData(BaseModel):
     status: StatusEnum
     created_at: datetime
     updated_at: datetime
+    twitter_login: bool
+    twitter_id: Optional[str]
     profile: Optional[UserProfileData]
 
     model_config = ConfigDict(from_attributes=True)
