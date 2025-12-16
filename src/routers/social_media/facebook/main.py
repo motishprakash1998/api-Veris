@@ -425,14 +425,14 @@ async def callback(
     if existing:
         existing.name = me_json.get("name")
         existing.email = me_json.get("email")
-        existing.picture = me_json.get("picture", {})
+        existing.picture_url = me_json.get("picture", {})
         existing.raw_data = me_json
     else:
         new_user = FacebookUser(
         fb_user_id=fb_id,
         name=me_json.get("name"),
         email=me_json.get("email"),
-        picture=me_json.get("picture", {}),
+        picture_url=me_json.get("picture", {}),
         raw_data=me_json,
         )
         db.add(new_user)
