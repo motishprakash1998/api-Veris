@@ -419,7 +419,7 @@ async def callback(
     request.session["me_data"] = me_json
     # ---- STORE INTO DATABASE ----
     fb_id = me_json.get("id")
-    existing = db.query(FacebookUser).filter(FacebookUser.id == fb_id).first()
+    existing = db.query(FacebookUser).filter(FacebookUser.fb_user_id == fb_id).first()
 
 
     if existing:
@@ -429,7 +429,7 @@ async def callback(
         existing.raw_data = me_json
     else:
         new_user = FacebookUser(
-        id=fb_id,
+        fb_user_id=fb_id,
         name=me_json.get("name"),
         email=me_json.get("email"),
         picture=me_json.get("picture", {}),
