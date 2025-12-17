@@ -420,19 +420,21 @@ async def callback(
     # ---- STORE INTO DATABASE ----
     fb_id = me_json.get("id")
     existing = db.query(FacebookUser).filter(FacebookUser.fb_user_id == fb_id).first()
-
+    picture_url = None
+    if me_json.get("picture") and me_json["picture"].get("data"):
+        picture_url = me_json["picture"]["data"].get("url")
 
     if existing:
         existing.name = me_json.get("name")
         existing.email = me_json.get("email")
-        existing.picture_url = me_json.get("picture", {})
+        existing.picture_url = picture_url
         # existing.raw_data = me_json
     else:
         new_user = FacebookUser(
         fb_user_id=fb_id,
         name=me_json.get("name"),
         email=me_json.get("email"),
-        picture_url=me_json.get("picture", {}),
+        picture_url=picture_url,
         # raw_data=me_json,
         )
         db.add(new_user)
