@@ -441,14 +441,25 @@ async def callback(
 
 
     db.commit()
+    db.refresh(existing if existing else new_user)
+    # Get FB user ID from db
+    jwt_token = ({"user_facebook_id": fb_id})
+    
+    
 
-    return JSONResponse(
-        {
-            "requested_scopes": request.session.get("requested_scopes"),
-            "granted_perms": granted,
-            "token_info": token_json,  # raw token exchange response (useful for dev)
-            "me": me_json,
-        }
+    # return JSONResponse(
+    #     {
+    #         "requested_scopes": request.session.get("requested_scopes"),
+    #         "granted_perms": granted,
+    #         "token_info": token_json,  # raw token exchange response (useful for dev)
+    #         "me": me_json,
+    #     }
+    # )
+    FRONTEND_SUCCESS_URL = "https://voxstrategix.com/auth/success"
+
+    return RedirectResponse(
+        url=f"{FRONTEND_SUCCESS_URL}?status=true&token={jwt_token}",
+        status_code=302
     )
 
 

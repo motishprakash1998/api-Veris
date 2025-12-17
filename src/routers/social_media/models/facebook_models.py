@@ -12,7 +12,7 @@ class FacebookUser(Base):
     name = Column(String(255))
     email = Column(String(255))
     picture_url = Column(Text)
-    fb_page_id = Column(Text, unique=True, nullable=False)
+    fb_page_id = Column(Text, unique=True, nullable=True)
     access_token = Column(Text)
     token_expires_at = Column(TIMESTAMP)
     created_at = Column(TIMESTAMP, default=datetime.utcnow)
