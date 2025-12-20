@@ -299,18 +299,32 @@ def _ensure_session(request: Request) -> None:
         )
 
 
+
+
+JWT_SECRET = "CHANGE_THIS_SECRET"
+JWT_ALGO = "HS256"
+
+REQUIRED_SCOPE = ["public_profile"]
+OPTIONAL_SCOPES = {
+    "email",
+    "user_posts",
+    "user_photos",
+    "user_location",
+    "user_link",
+}
+
+FRONTEND_SUCCESS_URL = "https://voxstrategix.com/auth/success"
+
+import httpx
+from src.routers.social_media.models.facebook_models import FacebookUser
+import jwt
+
 @router.get("/login")
 async def facebook_login(request: Request) -> RedirectResponse:
-    """
-    Redirects the user to Facebook OAuth dialog.
-    Query: scopes=... (repeatable) for optional scopes chosen by user.
-    """
-    # parse multiple scopes from query string robustly
     raw_qs = urlparse(str(request.url)).query
     parsed = parse_qs(raw_qs)
     chosen: List[str] = parsed.get("scopes", [])
 
-    # Build final scope list (required + chosen optional ones that we recognize)
     scopes = list(REQUIRED_SCOPE)
     for c in chosen:
         if c in OPTIONAL_SCOPES and c not in scopes:
@@ -320,31 +334,22 @@ async def facebook_login(request: Request) -> RedirectResponse:
 
     auth_url = (
         f"https://www.facebook.com/{FB_VERSION}/dialog/oauth?"
-        f"client_id={LOGIN_APP_ID}&redirect_uri={quote(LOGIN_REDIRECT_URI)}"
-        f"&scope={quote(scope_str)}&response_type=code"
+        f"client_id={LOGIN_APP_ID}"
+        f"&redirect_uri={quote(LOGIN_REDIRECT_URI)}"
+        f"&scope={quote(scope_str)}"
+        f"&response_type=code"
     )
 
-    # Save requested scopes in session for later display/use
-    _ensure_session(request)
     request.session["requested_scopes"] = scopes
 
     return RedirectResponse(url=auth_url, status_code=status.HTTP_302_FOUND)
 
-from src.routers.social_media.models.facebook_models import FacebookUser
-@router.get("/callback", response_class=JSONResponse)
-async def callback(
+# ---------- CALLBACK ----------
+@router.get("/callback")
+async def facebook_callback(
     request: Request,
-    db: Session = Depends(get_db)
-) -> JSONResponse:
-    """
-    Callback endpoint Facebook redirects to with ?code=... or ?error=...
-    Returns JSON containing:
-      - granted_perms: list of permissions granted
-      - requested_scopes: what we requested
-      - me: the /me Graph response (only fields allowed by granted perms)
-      - token_info: optionally the raw token exchange response
-    """
-    _ensure_session(request)
+    db: Session = Depends(get_db),
+):
     qs = request.query_params
 
     if "error" in qs:
@@ -352,114 +357,101 @@ async def callback(
 
     code = qs.get("code")
     if not code:
-        return JSONResponse({"error": "No code parameter in callback"}, status_code=400)
+        return JSONResponse({"error": "Missing code"}, status_code=400)
 
-    # Exchange code for access token
-    token_url = f"https://graph.facebook.com/{FB_VERSION}/oauth/access_token"
-    token_params = {
-        "client_id": LOGIN_APP_ID,
-        "redirect_uri": LOGIN_REDIRECT_URI,
-        "client_secret": LOGIN_APP_SECRET,
-        "code": code,
-    }
-    token_resp = requests.get(token_url, params=token_params)
-    try:
+    async with httpx.AsyncClient(timeout=10) as client:
+
+        # ---- TOKEN ----
+        token_resp = await client.get(
+            f"https://graph.facebook.com/{FB_VERSION}/oauth/access_token",
+            params={
+                "client_id": LOGIN_APP_ID,
+                "redirect_uri": LOGIN_REDIRECT_URI,
+                "client_secret": LOGIN_APP_SECRET,
+                "code": code,
+            },
+        )
+
         token_json = token_resp.json()
-    except Exception as e:
-        return JSONResponse({"error": "Token response not JSON", "detail": str(e)}, status_code=500)
+        access_token = token_json.get("access_token")
 
-    if "access_token" not in token_json:
-        return JSONResponse({"error": "No access_token in token response", "token_response": token_json}, status_code=400)
+        if not access_token:
+            return JSONResponse(
+                {"error": "Token exchange failed", "response": token_json},
+                status_code=400,
+            )
 
-    access_token = token_json["access_token"]
-    request.session["access_token"] = access_token
-    request.session["token_response"] = token_json
+        # ---- PERMISSIONS ----
+        perms_resp = await client.get(
+            f"https://graph.facebook.com/{FB_VERSION}/me/permissions",
+            params={"access_token": access_token},
+        )
 
-    # Get granted permissions
-    perms_url = f"https://graph.facebook.com/{FB_VERSION}/me/permissions"
-    perms_resp = requests.get(perms_url, params={"access_token": access_token})
-    try:
         perms_json = perms_resp.json()
-    except Exception as e:
-        return JSONResponse({"error": "Permissions response not JSON", "detail": str(e)}, status_code=500)
+        granted = [
+            p["permission"]
+            for p in perms_json.get("data", [])
+            if p.get("status") == "granted"
+        ]
 
-    granted = [p["permission"] for p in perms_json.get("data", []) if p.get("status") == "granted"]
-    request.session["granted_perms"] = granted
+        # ---- PROFILE ----
+        fields = ["id", "name", "picture.width(400).height(400)"]
+        if "email" in granted:
+            fields.append("email")
+        if "user_location" in granted:
+            fields.append("location")
+        if "user_link" in granted:
+            fields.append("link")
 
-    # Decide which fields to request based on granted perms
-    fields = ["id", "name"]
-    if "email" in granted:
-        fields.append("email")
-    # include picture always if public_profile was in required scope (public_profile implied)
-    fields.append("picture.width(400).height(400)")
+        fields_str = ",".join(fields)
 
-    if "user_link" in granted:
-        fields.append("link")
-    if "user_location" in granted:
-        fields.append("location")
+        me_resp = await client.get(
+            f"https://graph.facebook.com/{FB_VERSION}/me",
+            params={"fields": fields_str, "access_token": access_token},
+        )
 
-    fetch_posts = "user_posts" in granted
-    fetch_photos = "user_photos" in granted
-
-    fields_str = ",".join(fields)
-    if fetch_posts:
-        fields_str += ",posts.limit(5){message,created_time}"
-    if fetch_photos:
-        fields_str += ",photos.limit(5){name,picture}"
-
-    me_url = f"https://graph.facebook.com/{FB_VERSION}/me"
-    me_params = {"fields": fields_str, "access_token": access_token}
-
-    me_resp = requests.get(me_url, params=me_params)
-    try:
         me_json = me_resp.json()
-    except Exception as e:
-        return JSONResponse({"error": "/me response not JSON", "detail": str(e)}, status_code=500)
 
-    request.session["me_data"] = me_json
-    # ---- STORE INTO DATABASE ----
     fb_id = me_json.get("id")
-    existing = db.query(FacebookUser).filter(FacebookUser.fb_user_id == fb_id).first()
+    if not fb_id:
+        return JSONResponse({"error": "Invalid Facebook profile"}, status_code=400)
+
     picture_url = None
-    if me_json.get("picture") and me_json["picture"].get("data"):
+    if me_json.get("picture", {}).get("data"):
         picture_url = me_json["picture"]["data"].get("url")
+
+    existing = (
+        db.query(FacebookUser)
+        .filter(FacebookUser.fb_user_id == fb_id)
+        .first()
+    )
 
     if existing:
         existing.name = me_json.get("name")
         existing.email = me_json.get("email")
         existing.picture_url = picture_url
-        # existing.raw_data = me_json
     else:
-        new_user = FacebookUser(
-        fb_user_id=fb_id,
-        name=me_json.get("name"),
-        email=me_json.get("email"),
-        picture_url=picture_url,
-        # raw_data=me_json,
+        existing = FacebookUser(
+            fb_user_id=fb_id,
+            name=me_json.get("name"),
+            email=me_json.get("email"),
+            picture_url=picture_url,
         )
-        db.add(new_user)
-
+        db.add(existing)
 
     db.commit()
-    db.refresh(existing if existing else new_user)
-    # Get FB user ID from db
-    jwt_token = ({"user_facebook_id": fb_id})
-    
-    
+    db.refresh(existing)
 
-    # return JSONResponse(
-    #     {
-    #         "requested_scopes": request.session.get("requested_scopes"),
-    #         "granted_perms": granted,
-    #         "token_info": token_json,  # raw token exchange response (useful for dev)
-    #         "me": me_json,
-    #     }
-    # )
-    FRONTEND_SUCCESS_URL = "https://voxstrategix.com/auth/success"
+    # ---- JWT ----
+    jwt_token = jwt.encode(
+        {"user_facebook_id": fb_id},
+        JWT_SECRET,
+        algorithm=JWT_ALGO,
+    )
 
     return RedirectResponse(
         url=f"{FRONTEND_SUCCESS_URL}?status=true&token={jwt_token}",
-        status_code=302
+        status_code=302,
     )
 
 
