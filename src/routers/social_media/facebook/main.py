@@ -443,14 +443,15 @@ async def facebook_callback(
     db.refresh(existing)
 
     # ---- JWT ----
-    jwt_token = jwt.encode(
-        {"user_facebook_id": fb_id},
-        JWT_SECRET,
-        algorithm=JWT_ALGO,
-    )
+    import json
+    from urllib.parse import quote
+
+    payload = json.dumps({"user_facebook_id": fb_id})
+    token = quote(payload)
+
 
     return RedirectResponse(
-        url=f"{FRONTEND_SUCCESS_URL}?status=true&token={jwt_token}",
+        url=f"{FRONTEND_SUCCESS_URL}?status=true&token={token}",
         status_code=302,
     )
 
