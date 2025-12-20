@@ -21,3 +21,7 @@ class FacebookUserResponse(FacebookUserBase):
 
     class Config:
         from_attributes = True
+
+class FacebookPageBindRequest(BaseModel):
+    token: str
+    fb_page_id: str

@@ -1,14 +1,20 @@
 import os
 import re
+import jwt
+import json
+import httpx
 import requests
 from . import controller
-from typing import Optional,List
-from src.database import get_db
-from urllib.parse import urlparse,parse_qs, quote
-from sqlalchemy.orm import Session
-from fastapi import APIRouter, HTTPException, Query, Depends, BackgroundTasks,Request, status
-from fastapi.responses import RedirectResponse, JSONResponse
 from dotenv import load_dotenv
+from src.database import get_db
+from typing import Optional,List
+from sqlalchemy.orm import Session
+from urllib.parse import quote, unquote
+from urllib.parse import urlparse,parse_qs, quote
+from fastapi.responses import RedirectResponse, JSONResponse
+from src.routers.social_media.models.facebook_models import FacebookUser
+from fastapi import APIRouter, HTTPException, Query, Depends, BackgroundTasks,Request, status
+
 
 load_dotenv()
 
@@ -183,7 +189,6 @@ def normalize_post(post):
     }
 
 
-
 # ====================================================
 # ROUTES (API ENDPOINTS)
 # ====================================================
@@ -217,7 +222,6 @@ def get_page_info(
 # --- Helpers ---
 
 # --- Endpoint ---
-
 @router.get("/page/posts")
 def get_page_posts(
     input_value: str = Query(..., description="Facebook Page name or full URL"),
@@ -274,7 +278,6 @@ def get_page_posts(
         }
     )
     
-
 # ====== CONFIG (change these or set env vars) ======
 LOGIN_APP_ID = os.environ.get("FB_APP_ID", "2037441327057334")
 LOGIN_APP_SECRET = os.environ.get("FB_APP_SECRET", "f6579b31b6f6186aecda29b5be8a4481")
@@ -298,12 +301,10 @@ def _ensure_session(request: Request) -> None:
             "app.add_middleware(SessionMiddleware, secret_key=...)"
         )
 
-
-
-
+# ---------- LOGIN ----------
 JWT_SECRET = "CHANGE_THIS_SECRET"
 JWT_ALGO = "HS256"
-
+# Scope configuration
 REQUIRED_SCOPE = ["public_profile"]
 OPTIONAL_SCOPES = {
     "email",
@@ -312,13 +313,10 @@ OPTIONAL_SCOPES = {
     "user_location",
     "user_link",
 }
-
+# URL to redirect to on successful login (frontend)
 FRONTEND_SUCCESS_URL = "https://voxstrategix.com/auth/success"
 
-import httpx
-from src.routers.social_media.models.facebook_models import FacebookUser
-import jwt
-
+# URL to redirect to on login failure (frontend)
 @router.get("/login")
 async def facebook_login(request: Request) -> RedirectResponse:
     raw_qs = urlparse(str(request.url)).query
@@ -443,8 +441,6 @@ async def facebook_callback(
     db.refresh(existing)
 
     # ---- JWT ----
-    import json
-    from urllib.parse import quote
 
     payload = json.dumps({"user_facebook_id": fb_id})
     token = quote(payload)
@@ -455,6 +451,59 @@ async def facebook_callback(
         status_code=302,
     )
 
+# ---------- BIND PAGE ----------
+from src.routers.social_media.schemas.facebook_schemas import FacebookPageBindRequest
+@router.post("/bind-page")
+def bind_facebook_page(
+    payload: FacebookPageBindRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Bind a Facebook Page ID to an existing Facebook User
+    """
+
+    # 1️ Decode token (handle URL-encoded case)
+    try:
+        decoded_token = unquote(payload.token)
+        token_data = json.loads(decoded_token)
+        fb_user_id = token_data.get("user_facebook_id")
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid token format"
+        )
+
+    if not fb_user_id:
+        raise HTTPException(
+            status_code=400,
+            detail="user_facebook_id missing in token"
+        )
+
+    # 2️ Find user
+    user = (
+        db.query(FacebookUser)
+        .filter(FacebookUser.fb_user_id == fb_user_id)
+        .first()
+    )
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="Facebook user not found"
+        )
+
+    # 3️ Save page ID
+    user.fb_page_id = payload.fb_page_id
+    db.commit()
+    db.refresh(user)
+
+    # 4️ Response
+    return {
+        "status": True,
+        "message": "Facebook page linked successfully",
+        "fb_user_id": fb_user_id,
+        "fb_page_id": payload.fb_page_id,
+    }
 
 @router.get("/user/{fb_id}")
 async def get_facebook_user(
