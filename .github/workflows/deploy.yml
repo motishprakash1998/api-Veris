@@ -30,7 +30,7 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           source: "."
-          target: "/home/ubuntu/backend/api-Veris"
+          target: "/home/ubuntu/voxstrategix/api-Veris"
 
       - name: SSH and restart PM2 service
         uses: appleboy/ssh-action@v0.1.6
@@ -39,7 +39,7 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
-            cd /home/ubuntu/backend/api-Veris
+            cd /home/ubuntu/voxstrategix/api-Veris
             # Activate the veris virtual environment
             source ~/veris/bin/activate
             # Install/update dependencies
