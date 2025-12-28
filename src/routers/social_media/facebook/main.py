@@ -19,6 +19,10 @@ from src.routers.user_management.models.users import User
 from fastapi.security import OAuth2PasswordBearer
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 from src.utils.jwt import ( get_email_from_token)
+import logging
+
+logger = logging.getLogger(__name__)
+
 load_dotenv()
 
 
@@ -63,9 +67,9 @@ def validate(
 # ====================================================
 # FACEBOOK CONFIGURATION
 # ====================================================
-APP_ID = os.getenv("FB_APP_ID", "2007595690062087")
-APP_SECRET = os.getenv("FB_APP_SECRET", "61175cf6e37f68bf12d1ea59749e9fe9")
-ACCESS_TOKEN = os.getenv("FB_ACCESS_TOKEN", f"{APP_ID}|{APP_SECRET}")
+APP_ID = os.getenv("POST_FB_APP_ID", "2007595690062087")
+APP_SECRET = os.getenv("POST_FB_APP_SECRET", "61175cf6e37f68bf12d1ea59749e9fe9")
+ACCESS_TOKEN = os.getenv("POST_FB_ACCESS_TOKEN", f"{APP_ID}|{APP_SECRET}")
 
 GRAPH_API_URL = "https://graph.facebook.com/v19.0"
 POSTS_PER_PAGE = 10
@@ -203,26 +207,99 @@ def get_page_info(
 ):
     """
     🔹 Get basic information about a Facebook Page.
-    Accepts both:
-    - Plain name:  LalchandKatariaOfficial
-    - Full URL:    https://www.facebook.com/LalchandKatariaOfficial/
+    Accepts:
+    - Plain name: LalchandKatariaOfficial
+    - Full URL:   https://www.facebook.com/LalchandKatariaOfficial/
     """
-    page_name = extract_page_name(input_value)
-    page_data = fetch_page_basic(page_name)
 
-    return JSONResponse(
-        content={
-            "id": page_data["id"],
-            "name": page_data.get("name", ""),
-            "about": page_data.get("about"),
-            "category": page_data.get("category"),
-            "link": page_data.get("link"),
-            "fan_count": page_data.get("fan_count"),
-            "followers_count": page_data.get("followers_count"),
-            "picture_url": page_data.get("profile_picture"),
-        }
-    )
-# --- Helpers ---
+    try:
+        # -------------------------------
+        # Extract page name
+        # -------------------------------
+        page_name = extract_page_name(input_value)
+        if not page_name:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": False,
+                    "message": "Invalid Facebook page name or URL",
+                    "page": None,
+                },
+            )
+
+        # -------------------------------
+        # Fetch page info
+        # -------------------------------
+        page_data = fetch_page_basic(page_name)
+
+        if not page_data:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": False,
+                    "message": "Unable to fetch Facebook page information",
+                    "page": None,
+                },
+            )
+
+        if page_data.get("error"):
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": False,
+                    "message": page_data["error"].get("message", "Facebook API error"),
+                    "page": None,
+                },
+            )
+
+        # -------------------------------
+        # Validate page ID
+        # -------------------------------
+        page_id = page_data.get("id")
+        if not page_id:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": False,
+                    "message": "Could not determine Facebook Page ID",
+                    "page": None,
+                },
+            )
+
+        # -------------------------------
+        # Success response
+        # -------------------------------
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": True,
+                "page": {
+                    "id": page_data.get("id"),
+                    "name": page_data.get("name", ""),
+                    "about": page_data.get("about"),
+                    "category": page_data.get("category"),
+                    "link": page_data.get("link"),
+                    "fan_count": page_data.get("fan_count"),
+                    "followers_count": page_data.get("followers_count"),
+                    "picture_url": page_data.get("profile_picture"),
+                },
+            },
+        )
+
+    except Exception:
+        # -------------------------------
+        # Catch-all safety net
+        # -------------------------------
+        logger.exception("Error fetching Facebook page info")
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": False,
+                "message": "Something went wrong while fetching page information",
+                "page": None,
+            },
+        )
 
 # --- Endpoint ---
 @router.get("/page/posts")
@@ -230,61 +307,164 @@ def get_page_posts(
     input_value: str = Query(..., description="Facebook Page name or full URL"),
     after: Optional[str] = Query(None, description="Pagination cursor for next page"),
     before: Optional[str] = Query(None, description="Pagination cursor for previous page"),
-    limit: int = Query(10, description="Number of posts per page (default 10)"),
+    limit: int = Query(10, ge=1, le=100, description="Number of posts per page"),
     db: Session = Depends(get_db),
 ):
     """
     Fetch Facebook page info and recent posts.
     Supports pagination via 'after' and 'before' cursors.
     """
-    page_name = extract_page_name(input_value)
-    page_basic = fetch_page_basic(page_name)
 
-    if page_basic.get("error"):
-        raise HTTPException(status_code=400, detail=page_basic["error"]["message"])
+    try:
+        # -------------------------------
+        # Extract page name
+        # -------------------------------
+        page_name = extract_page_name(input_value)
+        if not page_name:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": False,
+                    "message": "Invalid Facebook page name or URL",
+                    "page": None,
+                    "posts": [],
+                },
+            )
 
-    page_id = page_basic.get("id")
-    if not page_id:
-        raise HTTPException(status_code=404, detail="Could not determine Page ID")
+        # -------------------------------
+        # Fetch page basic info
+        # -------------------------------
+        page_basic = fetch_page_basic(page_name)
 
-    # Fetch posts with correct pagination handling
-    posts_res = fetch_posts_for_page(page_id, after_cursor=after, before_cursor=before, limit=limit)
+        if not page_basic:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": False,
+                    "message": "Unable to fetch Facebook page information",
+                    "page": None,
+                    "posts": [],
+                },
+            )
 
-    if posts_res.get("error"):
-        raise HTTPException(status_code=400, detail=posts_res["error"]["message"])
+        if page_basic.get("error"):
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": False,
+                    "message": page_basic["error"].get("message", "Facebook API error"),
+                    "page": None,
+                    "posts": [],
+                },
+            )
 
-    raw_posts = posts_res.get("data", [])
-    posts = [normalize_post(p) for p in raw_posts]
+        # -------------------------------
+        # Validate page ID
+        # -------------------------------
+        page_id = page_basic.get("id")
+        if not page_id:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": False,
+                    "message": "Could not determine Facebook Page ID",
+                    "page": None,
+                    "posts": [],
+                },
+            )
 
-    paging = posts_res.get("paging", {})
-    cursors = paging.get("cursors", {}) if paging else {}
-    next_cursor = cursors.get("after")
-    prev_cursor = cursors.get("before")
+        # -------------------------------
+        # Fetch posts
+        # -------------------------------
+        posts_res = fetch_posts_for_page(
+            page_id,
+            after_cursor=after,
+            before_cursor=before,
+            limit=limit,
+        )
 
-    return JSONResponse(
-        content={
-            "page": {
-                "id": page_basic.get("id"),
-                "name": page_basic.get("name"),
-                "about": page_basic.get("about"),
-                "category": page_basic.get("category"),
-                "link": page_basic.get("link"),
-                "fan_count": page_basic.get("fan_count"),
-                "followers_count": page_basic.get("followers_count"),
-                "picture_url": page_basic.get("profile_picture"),
+        if not posts_res:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": False,
+                    "message": "Unable to fetch page posts",
+                    "page": None,
+                    "posts": [],
+                },
+            )
+
+        if posts_res.get("error"):
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": False,
+                    "message": posts_res["error"].get("message", "Facebook API error"),
+                    "page": None,
+                    "posts": [],
+                },
+            )
+
+        # -------------------------------
+        # Normalize posts
+        # -------------------------------
+        raw_posts = posts_res.get("data", [])
+        posts = [normalize_post(post) for post in raw_posts]
+
+        # -------------------------------
+        # Pagination cursors
+        # -------------------------------
+        paging = posts_res.get("paging", {})
+        cursors = paging.get("cursors", {}) if paging else {}
+
+        next_cursor = cursors.get("after")
+        prev_cursor = cursors.get("before")
+
+        # -------------------------------
+        # Success response
+        # -------------------------------
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": True,
+                "page": {
+                    "id": page_basic.get("id"),
+                    "name": page_basic.get("name"),
+                    "about": page_basic.get("about"),
+                    "category": page_basic.get("category"),
+                    "link": page_basic.get("link"),
+                    "fan_count": page_basic.get("fan_count"),
+                    "followers_count": page_basic.get("followers_count"),
+                    "picture_url": page_basic.get("profile_picture"),
+                },
+                "posts": posts,
+                "next_cursor": next_cursor,
+                "prev_cursor": prev_cursor,
+                "has_next": bool(next_cursor),
+                "has_previous": bool(prev_cursor),
             },
-            "posts": posts,
-            "next_cursor": next_cursor,
-            "prev_cursor": prev_cursor,
-            "has_next": bool(next_cursor),
-            "has_previous": bool(prev_cursor),
-        }
-    )
+        )
+
+    except Exception as e:
+        # -------------------------------
+        # Catch-all (never crash API)
+        # -------------------------------
+        logger.exception("Error fetching Facebook page posts")
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": False,
+                "message": "Something went wrong while processing the request",
+                "page": None,
+                "posts": [],
+            },
+        )
+
     
 # ====== CONFIG (change these or set env vars) ======
 LOGIN_APP_ID = os.environ.get("FB_APP_ID", "2037441327057334")
 LOGIN_APP_SECRET = os.environ.get("FB_APP_SECRET", "f6579b31b6f6186aecda29b5be8a4481")
-# Make sure this matches exactly the URI registered in Facebook App settings
 LOGIN_REDIRECT_URI = os.environ.get("FB_REDIRECT_URI", "https://backend-veris.skyserver.net.in/api/facebook/callback")
 FB_VERSION = os.environ.get("FB_VERSION", "v16.0")
 
@@ -297,16 +477,7 @@ OPTIONAL_SCOPES = {
 }
 
 
-def _ensure_session(request: Request) -> None:
-    if getattr(request, "session", None) is None:
-        raise RuntimeError(
-            "Session middleware not configured. Add SessionMiddleware to your FastAPI app:\n"
-            "app.add_middleware(SessionMiddleware, secret_key=...)"
-        )
-
 # ---------- LOGIN ----------
-JWT_SECRET = "CHANGE_THIS_SECRET"
-JWT_ALGO = "HS256"
 # Scope configuration
 REQUIRED_SCOPE = ["public_profile"]
 OPTIONAL_SCOPES = {
@@ -316,6 +487,8 @@ OPTIONAL_SCOPES = {
     "user_location",
     "user_link",
 }
+
+
 # URL to redirect to on successful login (frontend)
 FRONTEND_SUCCESS_URL = "https://voxstrategix.com/auth/facebook/success"
 
@@ -542,20 +715,4 @@ async def get_facebook_user(
         "page_id": user.fb_page_id,
         "access_token": user.access_token,
     }
-    
-
-@router.get("/save_page/info")
-def get_page_info(
-    input_value: str = Query(..., description="Facebook Page name or full URL"),
-    db: Session = Depends(get_db),
-):
-    """
-    🔹 Get basic information about a Facebook Page.
-    Accepts both:
-    - Plain name:  LalchandKatariaOfficial
-    - Full URL:    https://www.facebook.com/LalchandKatariaOfficial/
-    """
-    
-
-    return None
     

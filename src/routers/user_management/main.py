@@ -210,6 +210,7 @@ def get_info(request: Request, db: Session = Depends(get_db), token: str = Depen
         # -------------------------------
         from sqlalchemy import exists
         from src.routers.social_media.models.x_models import TwitterUser
+        from src.routers.social_media.models.facebook_models import FacebookUser
         twitter_user = (
                 db.query(TwitterUser)
                 .filter(TwitterUser.id == user.id)
@@ -219,6 +220,15 @@ def get_info(request: Request, db: Session = Depends(get_db), token: str = Depen
         twitter_login = bool(twitter_user)
         twitter_id = twitter_user.twitter_id if twitter_user else None
         
+        facebook_user = (
+                db.query(FacebookUser)
+                .filter(FacebookUser.user_id == user.id)
+                .first()
+            )
+        facebook_login = bool(facebook_user)
+        facebook_id = facebook_user.fb_user_id if facebook_user else None
+        facebook_page_id = facebook_user.fb_page_id if facebook_user else None
+
         user_data = schemas.UserData(
             id=user.id,
             email=user.email,
@@ -228,7 +238,10 @@ def get_info(request: Request, db: Session = Depends(get_db), token: str = Depen
             updated_at=user.updated_at,
             profile=profile_data,
             twitter_id = twitter_id,
-            twitter_login=bool(twitter_login)
+            twitter_login=bool(twitter_login),
+            facebook_id = facebook_id,
+            facebook_login=bool(facebook_login),
+            facebook_url=facebook_page_id,
         )
         
         return schemas.UserResponse(

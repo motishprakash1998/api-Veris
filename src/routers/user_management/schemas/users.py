@@ -173,6 +173,9 @@ class UserData(BaseModel):
     updated_at: datetime
     twitter_login: bool
     twitter_id: Optional[str]
+    facebook_login: bool
+    facebook_id: Optional[str]
+    facebook_url: Optional[str]
     profile: Optional[UserProfileData]
 
     model_config = ConfigDict(from_attributes=True)
