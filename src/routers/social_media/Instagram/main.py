@@ -51,25 +51,17 @@ REDIRECT_URI = "https://backend-veris.skyserver.net.in/api/instagram/callback"
 # -------------------------------------------------------
 # 🔹 STEP 1 — LOGIN (Redirect to Instagram)
 # -------------------------------------------------------
+from urllib.parse import urlencode
 @router.get("/login")
 def instagram_login():
+    params = {
+        "client_id": CLIENT_ID,
+        "redirect_uri": REDIRECT_URI,
+        "scope": "user_profile",
+        "response_type": "code",
+    }
 
-    scope = (
-    "pages_show_list,"
-    "pages_manage_metadata,"
-    "pages_read_engagement,"
-    "pages_read_user_content,"
-    "pages_manage_posts"
-)
-
-
-    auth_url = (
-        "https://www.facebook.com/v21.0/dialog/oauth"
-        f"?client_id={CLIENT_ID}"
-        f"&redirect_uri={REDIRECT_URI}"
-        f"&scope={scope}"
-        f"&response_type=code"
-    )
+    auth_url = "https://api.instagram.com/oauth/authorize?" + urlencode(params)
 
     return RedirectResponse(url=auth_url)
 
@@ -82,24 +74,30 @@ def instagram_login():
 def instagram_callback(request: Request):
 
     code = request.query_params.get("code")
-
     if not code:
         return {"error": "Missing code"}
 
-    token_url = "https://graph.facebook.com/v21.0/oauth/access_token"
+    token_url = "https://api.instagram.com/oauth/access_token"
 
     payload = {
         "client_id": CLIENT_ID,
         "client_secret": CLIENT_SECRET,
+        "grant_type": "authorization_code",
         "redirect_uri": REDIRECT_URI,
-        "code": code
+        "code": code,
     }
 
-    res = requests.get(token_url, params=payload)
+    response = requests.post(token_url, data=payload)
+    token_data = response.json()
 
-    data = res.json()
+    if "access_token" not in token_data:
+        return {
+            "error": "Token exchange failed",
+            "response": token_data
+        }
 
     return {
         "success": True,
-        "access_token": data
+        "access_token": token_data["access_token"],
+        "user_id": token_data.get("user_id")
     }
