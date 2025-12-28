@@ -1,67 +1,67 @@
-name: CI/CD Pipeline for Veris Frontend (React + Vite + PM2)
+# name: CI/CD Pipeline for Veris Frontend (React + Vite + PM2)
 
-on:
-  push:
-    branches:
-      - main # Deploy only when pushing to main branch
+# on:
+#   push:
+#     branches:
+#       - main # Deploy only when pushing to main branch
 
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
+# jobs:
+#   deploy:
+#     runs-on: ubuntu-latest
 
-    steps:
-      # 1. Checkout code
-      - name: Checkout code
-        uses: actions/checkout@v3
+#     steps:
+#       # 1. Checkout code
+#       - name: Checkout code
+#         uses: actions/checkout@v3
 
-      # 2. Setup Node.js
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: "20"
+#       # 2. Setup Node.js
+#       - name: Set up Node.js
+#         uses: actions/setup-node@v3
+#         with:
+#           node-version: "20"
 
-      # 3. Cache npm dependencies for faster builds
-      - name: Cache node modules
-        uses: actions/cache@v3
-        with:
-          path: ~/.npm
-          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-
+#       # 3. Cache npm dependencies for faster builds
+#       - name: Cache node modules
+#         uses: actions/cache@v3
+#         with:
+#           path: ~/.npm
+#           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+#           restore-keys: |
+#             ${{ runner.os }}-node-
 
-      # 4. Install dependencies & build
-      - name: Install dependencies & build
-        run: |
-          npm ci
-          npm run build
+#       # 4. Install dependencies & build
+#       - name: Install dependencies & build
+#         run: |
+#           npm ci
+#           npm run build
 
-      # 5. Copy dist folder to EC2
-      - name: Copy dist folder to EC2
-        uses: appleboy/scp-action@v0.1.4
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          source: "dist/*"
-          target: "/home/ubuntu/voxstrategix/ui-ux-veris/dist"
+#       # 5. Copy dist folder to EC2
+#       - name: Copy dist folder to EC2
+#         uses: appleboy/scp-action@v0.1.4
+#         with:
+#           host: ${{ secrets.EC2_HOST }}
+#           username: ${{ secrets.EC2_USER }}
+#           key: ${{ secrets.EC2_SSH_KEY }}
+#           source: "dist/*"
+#           target: "/home/ubuntu/voxstrategix/ui-ux-veris/dist"
 
-      # 6. Restart PM2 on EC2
-      - name: SSH and restart PM2 service
-        uses: appleboy/ssh-action@v0.1.6
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script: |
-            cd /home/ubuntu/voxstrategix/ui-ux-veris
-            git stash             # in case there are uncommitted changes
-            git checkout main
-            git pull origin main  # fetch latest code
-            # Ensure serve is installed globally
-            npm install -g serve
-            npm ci
-            npm run build
-            # Restart or start PM2 service
-            pm2 restart veris_frontend || pm2 start "serve -s dist" --name veris_frontend --watch
-            pm2 save
-            echo "Frontend deployment completed successfully!"
+#       # 6. Restart PM2 on EC2
+#       - name: SSH and restart PM2 service
+#         uses: appleboy/ssh-action@v0.1.6
+#         with:
+#           host: ${{ secrets.EC2_HOST }}
+#           username: ${{ secrets.EC2_USER }}
+#           key: ${{ secrets.EC2_SSH_KEY }}
+#           script: |
+#             cd /home/ubuntu/voxstrategix/ui-ux-veris
+#             git stash             # in case there are uncommitted changes
+#             git checkout main
+#             git pull origin main  # fetch latest code
+#             # Ensure serve is installed globally
+#             npm install -g serve
+#             npm ci
+#             npm run build
+#             # Restart or start PM2 service
+#             pm2 restart veris_frontend || pm2 start "serve -s dist" --name veris_frontend --watch
+#             pm2 save
+#             echo "Frontend deployment completed successfully!"

@@ -512,7 +512,7 @@ async def facebook_login(request: Request,token: str = Depends(oauth2_scheme)) -
         f"client_id={LOGIN_APP_ID}"
         f"&redirect_uri={quote(LOGIN_REDIRECT_URI)}"
         f"&scope={quote(scope_str)}"
-        f"&response_type=code",
+        f"&response_type=code"
         f"&state={state}"
     )
 

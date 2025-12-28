@@ -3,7 +3,8 @@ from sqlalchemy import Column, Integer, String, Text, TIMESTAMP
 from sqlalchemy.orm import declarative_base
 from sqlalchemy import ForeignKey
 
-Base = declarative_base()
+# Base = declarative_base()
+from src.database.dbbase import Base
 
 class FacebookUser(Base):
     __tablename__ = "facebook_users"

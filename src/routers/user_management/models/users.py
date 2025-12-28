@@ -8,7 +8,8 @@ from sqlalchemy import (
 from sqlalchemy.sql import func
 from sqlalchemy.orm import validates, relationship, declarative_base
 
-Base = declarative_base()
+# Base = declarative_base()
+from src.database.dbbase import Base
 
 # =============================
 # Enums
