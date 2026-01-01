@@ -494,7 +494,13 @@ FRONTEND_SUCCESS_URL = "https://voxstrategix.com/auth/facebook/success"
 
 # URL to redirect to on login failure (frontend)
 @router.get("/login")
-async def facebook_login(request: Request,token: str = Depends(oauth2_scheme)) -> RedirectResponse:
+async def facebook_login(
+    request: Request,
+    token: str = Query(..., description="JWT access token"),
+):
+    # -------------------------------
+    # Read optional scopes from query
+    # -------------------------------
     raw_qs = urlparse(str(request.url)).query
     parsed = parse_qs(raw_qs)
     chosen: List[str] = parsed.get("scopes", [])
@@ -503,7 +509,10 @@ async def facebook_login(request: Request,token: str = Depends(oauth2_scheme)) -
     for c in chosen:
         if c in OPTIONAL_SCOPES and c not in scopes:
             scopes.append(c)
-            
+
+    # -------------------------------
+    # Encode token into state
+    # -------------------------------
     state = quote(token)
     scope_str = ",".join(scopes)
 
@@ -516,9 +525,11 @@ async def facebook_login(request: Request,token: str = Depends(oauth2_scheme)) -
         f"&state={state}"
     )
 
+    # optional (debug / audit)
     request.session["requested_scopes"] = scopes
 
     return RedirectResponse(url=auth_url, status_code=status.HTTP_302_FOUND)
+
 
 # ---------- CALLBACK ----------
 @router.get("/callback")
@@ -533,12 +544,11 @@ async def facebook_callback(
         raise HTTPException(status_code=400, detail="Missing code or state")
 
     # -------------------------------
-    # TOKEN FROM STATE
+    # Decode token from state
     # -------------------------------
     raw_token = unquote(state)
-
-    # ✅ SAME DECODE LOGIC
     email = get_email_from_token(raw_token)
+
     if not email:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
@@ -552,10 +562,9 @@ async def facebook_callback(
         raise HTTPException(status_code=404, detail="User not found")
 
     # -------------------------------
-    # 3. Exchange Facebook token
+    # Exchange code → access token
     # -------------------------------
     async with httpx.AsyncClient(timeout=10) as client:
-
         token_resp = await client.get(
             f"https://graph.facebook.com/{FB_VERSION}/oauth/access_token",
             params={
@@ -576,7 +585,7 @@ async def facebook_callback(
             )
 
         # -------------------------------
-        # 4. Fetch Facebook profile
+        # Fetch Facebook profile
         # -------------------------------
         me_resp = await client.get(
             f"https://graph.facebook.com/{FB_VERSION}/me",
@@ -599,7 +608,7 @@ async def facebook_callback(
     )
 
     # -------------------------------
-    # 5. Link Facebook account
+    # Link Facebook account
     # -------------------------------
     existing = (
         db.query(FacebookUser)
@@ -607,24 +616,21 @@ async def facebook_callback(
         .first()
     )
 
-    # Facebook already linked?
     if existing:
         if existing.user_id != user.id:
             raise HTTPException(
                 status_code=409,
-                detail="Facebook account already linked to another user",
+                detail="Facebook already linked to another user",
             )
 
-        # Update info
         existing.name = me_json.get("name")
         existing.email = me_json.get("email")
         existing.picture_url = picture_url
         existing.access_token = access_token
 
     else:
-        # Create link
         fb_user = FacebookUser(
-            user_id=user.id,          # 🔥 MAIN MAPPING
+            user_id=user.id,
             fb_user_id=fb_id,
             name=me_json.get("name"),
             email=me_json.get("email"),
@@ -636,7 +642,7 @@ async def facebook_callback(
     db.commit()
 
     # -------------------------------
-    # 6. Redirect to frontend
+    # Redirect to frontend
     # -------------------------------
     return RedirectResponse(
         url=f"{FRONTEND_SUCCESS_URL}?status=true&provider=facebook",
