@@ -220,104 +220,124 @@ def fetch_instagram_profile(username: str, db: Session):
 
 def fetch_instagram_posts(username: str, db: Session):
     """
-    Fetch Instagram posts intelligently:
+    Fetch Instagram posts intelligently (BACKGROUND SAFE):
     - If post count unchanged → skip
     - If increased → save only new posts
+    - ❌ Never raises HTTPException
     """
 
-    # --------------------------------------------------
-    # 1️⃣ Find social account
-    # --------------------------------------------------
-    account = (
-        db.query(SocialAccount)
-        .filter(SocialAccount.username == username)
-        .first()
-    )
-
-    if not account:
-        raise HTTPException(status_code=404, detail="Instagram account not found")
-
-    # --------------------------------------------------
-    # 2️⃣ Get last saved post
-    # --------------------------------------------------
-    last_post = (
-        db.query(Post)
-        .filter(Post.social_account_id == account.id)
-        .order_by(Post.created_at.desc())
-        .first()
-    )
-
-    last_post_time = last_post.created_at if last_post else None
-
-    # --------------------------------------------------
-    # 3️⃣ Call API (once)
-    # --------------------------------------------------
-    url = f"https://{RAPIDAPI_HOST}/userposts/{username}"
-
-    r = requests.get(url, headers=HEADERS, timeout=15)
-    if r.status_code != 200:
-        raise HTTPException(status_code=502, detail="Instagram posts API failed")
-
-    items = r.json().get("items", [])
-    if not items:
-        return []
-
-    results = []
-
-    # --------------------------------------------------
-    # 4️⃣ Iterate ONLY NEW POSTS
-    # --------------------------------------------------
-    for item in items:
-        post_time = datetime.fromtimestamp(item["taken_at"])
-
-        # 🛑 stop when we reach already saved posts
-        if last_post_time and post_time <= last_post_time:
-            break
-
+    try:
         # --------------------------------------------------
-        # Create post if not exists
+        # 1️⃣ Find social account
         # --------------------------------------------------
-        post = (
-            db.query(Post)
-            .filter_by(
-                social_account_id=account.id,
-                platform_post_id=item["id"],
-            )
+        account = (
+            db.query(SocialAccount)
+            .filter(SocialAccount.username == username)
             .first()
         )
 
-        if not post:
-            post = Post(
-                social_account_id=account.id,
-                platform_post_id=item["id"],
-                created_at=post_time,
-                text=item.get("caption", {}).get("text"),
-                language="en",
-            )
-            db.add(post)
-            db.flush()  # ⚡ no commit yet
+        if not account:
+            logger.warning(f"Instagram account not found: {username}")
+            return []
 
         # --------------------------------------------------
-        # Always store metrics snapshot
+        # 2️⃣ Get last saved post
         # --------------------------------------------------
-        metric = PostMetric(
-            post_id=post.id,
-            like_count=item.get("like_count"),
-            comment_count=item.get("comment_count"),
-            view_count=item.get("view_count"),
+        last_post = (
+            db.query(Post)
+            .filter(Post.social_account_id == account.id)
+            .order_by(Post.created_at.desc())
+            .first()
         )
-        db.add(metric)
 
-        results.append({
-            "post_id": item["id"],
-            "likes": metric.like_count,
-            "comments": metric.comment_count,
-            "views": metric.view_count,
-        })
+        last_post_time = last_post.created_at if last_post else None
 
-    # --------------------------------------------------
-    # 5️⃣ Final commit
-    # --------------------------------------------------
-    db.commit()
+        # --------------------------------------------------
+        # 3️⃣ Call Instagram API
+        # --------------------------------------------------
+        url = f"https://{RAPIDAPI_HOST}/userposts/{username}"
 
-    return results
+        response = requests.get(url, headers=HEADERS, timeout=15)
+
+        if response.status_code != 200:
+            logger.error(
+                f"Instagram posts API failed "
+                f"(status={response.status_code}) for {username}"
+            )
+            return []
+
+        payload = response.json()
+        items = payload.get("items", [])
+
+        if not items:
+            return []
+
+        results = []
+
+        # --------------------------------------------------
+        # 4️⃣ Iterate ONLY NEW POSTS
+        # --------------------------------------------------
+        for item in items:
+            if "taken_at" not in item or "id" not in item:
+                continue
+
+            post_time = datetime.fromtimestamp(item["taken_at"])
+
+            # 🛑 stop when we reach already saved posts
+            if last_post_time and post_time <= last_post_time:
+                break
+
+            # --------------------------------------------------
+            # Create post if not exists
+            # --------------------------------------------------
+            post = (
+                db.query(Post)
+                .filter_by(
+                    social_account_id=account.id,
+                    platform_post_id=item["id"],
+                )
+                .first()
+            )
+
+            if not post:
+                post = Post(
+                    social_account_id=account.id,
+                    platform_post_id=item["id"],
+                    created_at=post_time,
+                    text=item.get("caption", {}).get("text"),
+                    language="en",
+                )
+                db.add(post)
+                db.flush()  # ensures post.id exists
+
+            # --------------------------------------------------
+            # Store metrics snapshot
+            # --------------------------------------------------
+            metric = PostMetric(
+                post_id=post.id,
+                like_count=item.get("like_count"),
+                comment_count=item.get("comment_count"),
+                view_count=item.get("view_count"),
+            )
+            db.add(metric)
+
+            results.append({
+                "post_id": item["id"],
+                "likes": metric.like_count,
+                "comments": metric.comment_count,
+                "views": metric.view_count,
+            })
+
+        # --------------------------------------------------
+        # 5️⃣ Commit once
+        # --------------------------------------------------
+        db.commit()
+
+        return results
+
+    except Exception as e:
+        db.rollback()
+        logger.exception(
+            f"Unexpected error while fetching Instagram posts for {username}: {e}"
+        )
+        return []

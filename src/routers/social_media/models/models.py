@@ -65,6 +65,11 @@ class AccountProfile(Base):
     source = Column(Text)  # 'api', 'scrape', 'upload'
     like_count: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     retrieved_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False
+    )
 
     __table_args__ = (
     Index(
@@ -88,6 +93,11 @@ class AccountSnapshot(Base):
     following_count = Column(BigInteger)
     post_count = Column(BigInteger)
     extra = Column(JSON)
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False
+    )
 
     __table_args__ = (
         UniqueConstraint("social_account_id", "snapshot_at"),
