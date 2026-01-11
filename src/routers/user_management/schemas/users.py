@@ -176,6 +176,9 @@ class UserData(BaseModel):
     facebook_login: bool
     facebook_id: Optional[str]
     facebook_url: Optional[str]
+    instagram_login: bool
+    instagram_id: Optional[str]
+    instagram_url: Optional[str]
     profile: Optional[UserProfileData]
 
     model_config = ConfigDict(from_attributes=True)
