@@ -11,12 +11,13 @@ from ..models import (Platform,
                       AccountSnapshot, 
                       Post, 
                       PostMetric, 
+                      PostMedia,
                       Engagement)
 
 # NOTE: The RapidAPI key is currently hard-coded for the user's example.
 RAPIDAPI_HOST = "instagram-scraper-20251.p.rapidapi.com"
-RAPIDAPI_KEY = "824d406ef9msha142b14f2e8c048p107c91jsnf1b131b9ca6a"
-
+# RAPIDAPI_KEY = "824d406ef9msha142b14f2e8c048p107c91jsnf1b131b9ca6a"
+RAPIDAPI_KEY = "3ce8c354e3msh22662032620dd62p121c70jsn15208e443454"
 
 HEADERS = {
     "x-rapidapi-host": RAPIDAPI_HOST,
@@ -65,9 +66,10 @@ def fetch_instagram_profile(username: str, db: Session):
     # --------------------------------------------------
     # 1️⃣ Fetch from RapidAPI
     # --------------------------------------------------
-    url = f"https://{RAPIDAPI_HOST}/userinfo/"
-    params = {"username_or_id": username}
-
+    url = f"https://{RAPIDAPI_HOST}/userinfo"
+    params = {
+        "username_or_id": username
+    }
     try:
         resp = requests.get(
             url, headers=HEADERS, params=params, timeout=15
@@ -217,127 +219,240 @@ def fetch_instagram_profile(username: str, db: Session):
         "synced_at": datetime.utcnow(),
     }
 
+from datetime import datetime
+import requests
 
-def fetch_instagram_posts(username: str, db: Session):
+def _extract_media_from_item(item: dict):
     """
-    Fetch Instagram posts intelligently (BACKGROUND SAFE):
-    - If post count unchanged → skip
-    - If increased → save only new posts
-    - ❌ Never raises HTTPException
+    Returns list of media dicts:
+    [
+      {"media_type": "image", "media_url": "...", "media_metadata": {...}},
+      ...
+    ]
+    """
+    media_list = []
+
+    # ✅ Case 1: carousel
+    carousel = item.get("carousel_media") or []
+    if carousel:
+        for m in carousel:
+            media_type = "image"
+            media_url = None
+
+            # video
+            if m.get("video_versions"):
+                media_type = "video"
+                media_url = m["video_versions"][0].get("url")
+
+            # image
+            elif m.get("image_versions2", {}).get("candidates"):
+                media_type = "image"
+                media_url = m["image_versions2"]["candidates"][0].get("url")
+
+            if media_url:
+                media_list.append({
+                    "media_type": media_type,
+                    "media_url": media_url,
+                    "media_metadata": {
+                        "id": m.get("id"),
+                        "is_video": m.get("is_video"),
+                    }
+                })
+
+        return media_list
+
+    # ✅ Case 2: single video
+    if item.get("video_versions"):
+        media_url = item["video_versions"][0].get("url")
+        if media_url:
+            media_list.append({
+                "media_type": "video",
+                "media_url": media_url,
+                "media_metadata": {
+                    "id": item.get("id"),
+                    "is_video": item.get("is_video"),
+                }
+            })
+        return media_list
+
+    # ✅ Case 3: single image
+    candidates = item.get("image_versions2", {}).get("candidates", [])
+    if candidates:
+        media_url = candidates[0].get("url")
+        if media_url:
+            media_list.append({
+                "media_type": "image",
+                "media_url": media_url,
+                "media_metadata": {
+                    "id": item.get("id"),
+                    "is_video": item.get("is_video"),
+                }
+            })
+
+    return media_list
+
+
+def fetch_instagram_posts(username: str, db: Session, max_posts: int = 20, cursor: str | None = None):
+    """
+    ✅ Saves:
+    - Post -> posts
+    - PostMetric -> post_metrics
+    - PostMedia -> post_media
+    ✅ Returns:
+    - results list
+    - next_cursor for "next button"
     """
 
     try:
-        # --------------------------------------------------
-        # 1️⃣ Find social account
-        # --------------------------------------------------
-        account = (
-            db.query(SocialAccount)
-            .filter(SocialAccount.username == username)
-            .first()
-        )
+        logger.info(f"🚀 [IG POSTS] Start | username='{username}' | max_posts={max_posts} | cursor={cursor}")
 
+        # 1) Find account
+        account = db.query(SocialAccount).filter(SocialAccount.username == username).first()
         if not account:
-            logger.warning(f"Instagram account not found: {username}")
-            return []
+            logger.warning(f"⚠️ [IG POSTS] SocialAccount not found: {username}")
+            return {"items": [], "next_cursor": None}
 
-        # --------------------------------------------------
-        # 2️⃣ Get last saved post
-        # --------------------------------------------------
+        # 2) last saved post
         last_post = (
             db.query(Post)
             .filter(Post.social_account_id == account.id)
             .order_by(Post.created_at.desc())
             .first()
         )
-
         last_post_time = last_post.created_at if last_post else None
+        logger.info(f"🕒 [IG POSTS] last_post_time={last_post_time}")
 
-        # --------------------------------------------------
-        # 3️⃣ Call Instagram API
-        # --------------------------------------------------
-        url = f"https://{RAPIDAPI_HOST}/userposts/{username}"
+        # 3) API call
+        url = f"https://{RAPIDAPI_HOST}/userposts"
+        params = {"username_or_id": username}
 
-        response = requests.get(url, headers=HEADERS, timeout=15)
+        # ✅ Pagination (depends on API, common params)
+        if cursor:
+            params["max_id"] = cursor  # some APIs use max_id / next_max_id / end_cursor
 
-        if response.status_code != 200:
-            logger.error(
-                f"Instagram posts API failed "
-                f"(status={response.status_code}) for {username}"
-            )
-            return []
+        logger.info(f"🌐 [IG POSTS] Calling API | url={url} | params={params}")
 
-        payload = response.json()
-        items = payload.get("items", [])
+        resp = requests.get(url, headers=HEADERS, params=params, timeout=15)
 
-        if not items:
-            return []
+        logger.info(f"📡 [IG POSTS] status={resp.status_code} | url={resp.url}")
+        logger.debug(f"📦 [IG POSTS] raw={resp.text[:500]}")
+
+        if resp.status_code != 200:
+            logger.error(f"❌ [IG POSTS] API failed: {resp.status_code} | {resp.text[:200]}")
+            return {"items": [], "next_cursor": None}
+
+        payload = resp.json()
+        data = payload.get("data") or payload
+        items = data.get("items", [])
+
+        # ✅ next cursor (API dependent)
+        next_cursor = (
+            data.get("next_max_id")
+            or data.get("next_id")
+            or data.get("end_cursor")
+            or None
+        )
+
+        logger.info(f"📌 [IG POSTS] items_received={len(items)} | next_cursor={next_cursor}")
 
         results = []
+        inserted_posts = 0
+        inserted_metrics = 0
+        inserted_media = 0
 
-        # --------------------------------------------------
-        # 4️⃣ Iterate ONLY NEW POSTS
-        # --------------------------------------------------
-        for item in items:
+        # 4) iterate posts (limit max_posts)
+        for item in items[:max_posts]:
             if "taken_at" not in item or "id" not in item:
                 continue
+            
+            from datetime import timezone
+            post_time = datetime.fromtimestamp(item["taken_at"], tz=timezone.utc)
+            platform_post_id = str(item["id"])
 
-            post_time = datetime.fromtimestamp(item["taken_at"])
-
-            # 🛑 stop when we reach already saved posts
+            # optional stop when old posts reached
             if last_post_time and post_time <= last_post_time:
+                logger.info(f"🛑 [IG POSTS] stop old post reached | {post_time} <= {last_post_time}")
                 break
 
-            # --------------------------------------------------
-            # Create post if not exists
-            # --------------------------------------------------
+            # create post
             post = (
                 db.query(Post)
-                .filter_by(
-                    social_account_id=account.id,
-                    platform_post_id=item["id"],
-                )
+                .filter_by(social_account_id=account.id, platform_post_id=platform_post_id)
                 .first()
             )
 
             if not post:
                 post = Post(
                     social_account_id=account.id,
-                    platform_post_id=item["id"],
+                    platform_post_id=platform_post_id,
                     created_at=post_time,
                     text=item.get("caption", {}).get("text"),
                     language="en",
+                    raw_response=item,   # ✅ store raw item
                 )
                 db.add(post)
-                db.flush()  # ensures post.id exists
+                db.flush()
+                inserted_posts += 1
+                logger.info(f"✅ [IG POSTS] Post inserted | post_id={post.id} | platform_post_id={platform_post_id}")
 
-            # --------------------------------------------------
-            # Store metrics snapshot
-            # --------------------------------------------------
+            # ✅ insert metric snapshot
             metric = PostMetric(
                 post_id=post.id,
                 like_count=item.get("like_count"),
                 comment_count=item.get("comment_count"),
                 view_count=item.get("view_count"),
+                share_count=item.get("reshare_count") or item.get("share_count"),
+                extra={
+                    "has_liked": item.get("has_liked"),
+                    "play_count": item.get("play_count"),
+                },
             )
             db.add(metric)
+            inserted_metrics += 1
+
+            # ✅ insert media
+            media_list = _extract_media_from_item(item)
+            for m in media_list:
+                media = PostMedia(
+                    post_id=post.id,
+                    media_type=m.get("media_type"),
+                    media_url=m.get("media_url"),
+                    media_metadata=m.get("media_metadata"),
+                )
+                db.add(media)
+                inserted_media += 1
 
             results.append({
-                "post_id": item["id"],
-                "likes": metric.like_count,
-                "comments": metric.comment_count,
-                "views": metric.view_count,
+                "post_id": platform_post_id,
+                "db_post_id": post.id,
+                "created_at": post_time.isoformat(),
+                "likes": item.get("like_count"),
+                "comments": item.get("comment_count"),
+                "views": item.get("view_count"),
+                "media_count": len(media_list),
             })
 
-        # --------------------------------------------------
-        # 5️⃣ Commit once
-        # --------------------------------------------------
+        # 5) Commit
+        logger.info(
+            f"💾 [IG POSTS] committing... inserted_posts={inserted_posts} "
+            f"inserted_metrics={inserted_metrics} inserted_media={inserted_media}"
+        )
+
         db.commit()
 
-        return results
+        logger.info("🎉 [IG POSTS] commit success ✅")
+
+        return {
+            "items": results,
+            "next_cursor": next_cursor
+        }
+
+    except IntegrityError as ie:
+        db.rollback()
+        logger.exception(f"❌ [IG POSTS] IntegrityError: {ie}")
+        return {"items": [], "next_cursor": None}
 
     except Exception as e:
         db.rollback()
-        logger.exception(
-            f"Unexpected error while fetching Instagram posts for {username}: {e}"
-        )
-        return []
+        logger.exception(f"🔥 [IG POSTS] Unexpected error: {e}")
+        return {"items": [], "next_cursor": None}
