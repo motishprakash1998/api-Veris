@@ -16,8 +16,8 @@ from ..models import (Platform,
 
 # NOTE: The RapidAPI key is currently hard-coded for the user's example.
 RAPIDAPI_HOST = "instagram-scraper-20251.p.rapidapi.com"
-# RAPIDAPI_KEY = "824d406ef9msha142b14f2e8c048p107c91jsnf1b131b9ca6a"
-RAPIDAPI_KEY = "3ce8c354e3msh22662032620dd62p121c70jsn15208e443454"
+RAPIDAPI_KEY = "824d406ef9msha142b14f2e8c048p107c91jsnf1b131b9ca6a"
+# RAPIDAPI_KEY = "3ce8c354e3msh22662032620dd62p121c70jsn15208e443454"
 
 HEADERS = {
     "x-rapidapi-host": RAPIDAPI_HOST,
